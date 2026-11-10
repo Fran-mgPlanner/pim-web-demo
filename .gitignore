@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+.vscode/
+*.db
+*.sqlite
+*.xlsx
+*.xls
+*.csv
+logs/
+exports/
