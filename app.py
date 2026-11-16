@@ -2,8 +2,11 @@
 """
 Sistema P.I.M. - Control de Inventarios | Planeamiento Mantenimiento Mina
 Estética: iOS / macOS Warm Glassmorphism (Crema/Arena en Claro · Grafito en Oscuro · Acento Coral/Terracota)
-Arquitectura Simplificada: 4 Vistas Directas (Visualizar por Flota, Actualizar + Fotos, Agregar + SAP, Estrategia + Backup)
-SQLite3 con modo WAL para concurrencia segura en PC Servidor / Red Local.
+Correcciones:
+  1. Sin sangría en bloques HTML (elimina que Markdown muestre código crudo &lt;div class=...&gt;).
+  2. Cambio de tema Claro/Oscuro/Sistema sin bucle de parpadeo (usando on_change nativo).
+  3. Margen superior amplio (padding-top: 3.8rem) para que la barra de Streamlit no tape el encabezado.
+  4. Botones directos en cada tarjeta ("👁️ Hoja de Vida" y "✏️ Actualizar / Foto").
 """
 
 import io
@@ -64,7 +67,7 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 
 # ==============================================================================
-# 1. UTILIDADES DE VALIDACIÓN NUMÉRICA, VIDAS Y BADGES DE FLOTA
+# 1. UTILIDADES DE VALIDACIÓN NUMÉRICA, VIDAS Y BADGES DE FLOTA (UNA SOLA LÍNEA)
 # ==============================================================================
 def format_vidas_label(vidas: int) -> str:
     n = int(vidas) if vidas is not None else 0
@@ -115,25 +118,25 @@ def validate_numeric_input(
 
 
 def get_flota_badge_html(flota: str) -> str:
-    """Indicador visual consistente por flota para distinguirla de inmediato."""
+    """Retorna HTML en una sola línea sin saltos ni espacios iniciales."""
     flota_clean = str(flota or "SIN_FLOTA").strip()
     paleta = {
-        "495H": ("rgba(224, 109, 83, 0.16)", "#D95D43"),
-        "410A": ("rgba(59, 130, 246, 0.16)", "#2563EB"),
-        "994F": ("rgba(46, 158, 107, 0.16)", "#2E9E6B"),
-        "793F": ("rgba(217, 130, 43, 0.18)", "#C2701E"),
-        "797F": ("rgba(139, 92, 246, 0.16)", "#7C3AED"),
+        "495H": ("rgba(224, 109, 83, 0.18)", "#D95D43"),
+        "410A": ("rgba(59, 130, 246, 0.18)", "#2563EB"),
+        "994F": ("rgba(46, 158, 107, 0.18)", "#2E9E6B"),
+        "793F": ("rgba(217, 130, 43, 0.20)", "#C2701E"),
+        "797F": ("rgba(139, 92, 246, 0.18)", "#7C3AED"),
     }
     if flota_clean in paleta:
         bg, fg = paleta[flota_clean]
     else:
         colores_extra = [
-            ("rgba(14, 165, 233, 0.16)", "#0284C7"),
-            ("rgba(236, 72, 153, 0.16)", "#DB2777"),
-            ("rgba(20, 184, 166, 0.16)", "#0D9488"),
+            ("rgba(14, 165, 233, 0.18)", "#0284C7"),
+            ("rgba(236, 72, 153, 0.18)", "#DB2777"),
+            ("rgba(20, 184, 166, 0.18)", "#0D9488"),
         ]
         bg, fg = colores_extra[sum(ord(c) for c in flota_clean) % len(colores_extra)]
-    return f'&lt;span class=&quot;flota-pill&quot; style=&quot;background:{bg}; color:{fg}; border:1px solid {fg}33;&quot;&gt;🚜 Flota {flota_clean}&lt;/span&gt;'
+    return f'&lt;span class=&quot;flota-pill&quot; style=&quot;background:{bg};color:{fg};border:1px solid {fg};&quot;&gt;🚜 Flota {flota_clean}&lt;/span&gt;'
 
 
 def get_status_badge_html(estado: str) -> str:
@@ -151,55 +154,51 @@ def get_status_badge_html(estado: str) -> str:
 
 
 # ==============================================================================
-# 2. ESTÉTICA iOS / macOS ADAPTABLE (ESCRITORIO, TABLET Y MÓVIL)
+# 2. ESTÉTICA iOS / macOS ADAPTABLE (SIN PARPADEO Y CON ESPACIO SUPERIOR)
 # ==============================================================================
 def inject_ios_macos_css(theme_mode: str) -> None:
     light_vars = """
-        --bg-app: #FBF8F3;
-        --bg-mesh-1: rgba(224, 109, 83, 0.08);
-        --bg-mesh-2: rgba(217, 173, 130, 0.10);
-        --bg-surface: rgba(255, 253, 249, 0.84);
-        --bg-elevated: rgba(243, 236, 226, 0.88);
-        --bg-input: rgba(255, 255, 255, 0.94);
+        --bg-app: #F7F3EB;
+        --bg-surface: #FFFFFF;
+        --bg-elevated: #EFE9DE;
+        --bg-input: #FFFFFF;
         --text-primary: #1F1D1A;
-        --text-secondary: #6B655D;
-        --text-muted: #8E877E;
-        --border-subtle: rgba(130, 110, 88, 0.16);
-        --border-strong: rgba(130, 110, 88, 0.28);
+        --text-secondary: #5C564E;
+        --text-muted: #827B72;
+        --border-subtle: rgba(120, 100, 80, 0.20);
+        --border-strong: rgba(120, 100, 80, 0.35);
         --accent: #E06D53;
         --accent-hover: #C85A40;
-        --accent-soft: rgba(224, 109, 83, 0.14);
-        --success: #2E9E6B;
-        --success-soft: rgba(46, 158, 107, 0.14);
-        --warning: #D9822B;
-        --warning-soft: rgba(217, 130, 43, 0.15);
-        --danger: #D14343;
-        --danger-soft: rgba(209, 67, 67, 0.14);
-        --shadow-card: 0 6px 20px rgba(45, 35, 25, 0.06);
+        --accent-soft: rgba(224, 109, 83, 0.15);
+        --success: #248A59;
+        --success-soft: rgba(36, 138, 89, 0.15);
+        --warning: #C8711B;
+        --warning-soft: rgba(200, 113, 27, 0.16);
+        --danger: #C93B3B;
+        --danger-soft: rgba(201, 59, 59, 0.15);
+        --shadow-card: 0 4px 14px rgba(45, 35, 25, 0.07);
     """
 
     dark_vars = """
         --bg-app: #16171A;
-        --bg-mesh-1: rgba(230, 126, 101, 0.09);
-        --bg-mesh-2: rgba(180, 130, 95, 0.07);
-        --bg-surface: rgba(31, 33, 38, 0.84);
-        --bg-elevated: rgba(43, 46, 54, 0.88);
-        --bg-input: rgba(38, 40, 47, 0.94);
+        --bg-surface: #212329;
+        --bg-elevated: #2B2E37;
+        --bg-input: #262931;
         --text-primary: #F4F1EC;
-        --text-secondary: #B5AFA6;
-        --text-muted: #8B857D;
-        --border-subtle: rgba(255, 255, 255, 0.10);
-        --border-strong: rgba(255, 255, 255, 0.20);
+        --text-secondary: #B8B2A8;
+        --text-muted: #8E887F;
+        --border-subtle: rgba(255, 255, 255, 0.12);
+        --border-strong: rgba(255, 255, 255, 0.24);
         --accent: #E67E65;
         --accent-hover: #F08F78;
-        --accent-soft: rgba(230, 126, 101, 0.18);
+        --accent-soft: rgba(230, 126, 101, 0.20);
         --success: #45C28A;
-        --success-soft: rgba(69, 194, 138, 0.16);
+        --success-soft: rgba(69, 194, 138, 0.18);
         --warning: #F0A352;
-        --warning-soft: rgba(240, 163, 82, 0.18);
+        --warning-soft: rgba(240, 163, 82, 0.20);
         --danger: #F06868;
-        --danger-soft: rgba(240, 104, 104, 0.18);
-        --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.34);
+        --danger-soft: rgba(240, 104, 104, 0.20);
+        --shadow-card: 0 6px 18px rgba(0, 0, 0, 0.35);
     """
 
     if theme_mode == "Claro":
@@ -207,179 +206,154 @@ def inject_ios_macos_css(theme_mode: str) -> None:
     elif theme_mode == "Oscuro":
         theme_css = f":root {{ {dark_vars} }}"
     else:
-        theme_css = f"""
-        :root {{ {light_vars} }}
-        @media (prefers-color-scheme: dark) {{
-            :root {{ {dark_vars} }}
-        }}
-        """
+        theme_css = f":root {{ {light_vars} }} @media (prefers-color-scheme: dark) {{ :root {{ {dark_vars} }} }}"
 
-    st.markdown(
-        f"""
-        <style>
-        {theme_css}
-        html, body, .stApp {{
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif !important;
-            background-color: var(--bg-app) !important;
-            background-image:
-                radial-gradient(at 10% 8%, var(--bg-mesh-1) 0px, transparent 48%),
-                radial-gradient(at 92% 14%, var(--bg-mesh-2) 0px, transparent 45%) !important;
-            color: var(--text-primary) !important;
-            overflow-x: hidden !important;
-        }}
-        .block-container {{
-            padding-top: 1rem !important;
-            padding-bottom: 2.5rem !important;
-            max-width: 1320px !important;
-            overflow-x: hidden !important;
-        }}
-        p, span, label, div, h1, h2, h3, h4, h5, h6 {{
-            color: var(--text-primary);
-        }}
+    css = f"""
+&lt;style&gt;
+{theme_css}
+html, body, .stApp, [data-testid=&quot;stAppViewContainer&quot;], [data-testid=&quot;stHeader&quot;] {{
+    font-family: -apple-system, BlinkMacSystemFont, &quot;SF Pro Text&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif !important;
+    background-color: var(--bg-app) !important;
+    color: var(--text-primary) !important;
+}}
+[data-testid=&quot;stHeader&quot;] {{
+    background: transparent !important;
+}}
+.block-container {{
+    padding-top: 3.6rem !important;
+    padding-bottom: 2.5rem !important;
+    max-width: 1320px !important;
+    overflow-x: hidden !important;
+}}
+p, span, label, div, h1, h2, h3, h4, h5, h6 {{
+    color: var(--text-primary);
+}}
+.mac-glass-card {{
+    background-color: var(--bg-surface) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 16px !important;
+    box-shadow: var(--shadow-card) !important;
+    padding: 1rem 1.15rem !important;
+    margin-bottom: 0.65rem !important;
+}}
+.responsive-kpi-grid {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+}}
+@media (max-width: 1024px) {{
+    .responsive-kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+}}
+@media (max-width: 640px) {{
+    .responsive-kpi-grid {{ grid-template-columns: 1fr; }}
+    .block-container {{ padding-top: 3.2rem !important; padding-left: 0.75rem !important; padding-right: 0.75rem !important; }}
+    div.stButton &gt; button, div.stDownloadButton &gt; button {{
+        min-height: 44px !important;
+        font-size: 0.92rem !important;
+    }}
+}}
+.kpi-label {{
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary) !important;
+}}
+.kpi-num {{
+    font-size: 1.45rem;
+    font-weight: 800;
+    color: var(--text-primary) !important;
+    margin-top: 0.15rem;
+}}
+.kpi-meta {{
+    font-size: 0.76rem;
+    color: var(--text-muted) !important;
+    margin-top: 0.15rem;
+}}
+.flota-pill {{
+    display: inline-flex;
+    align-items: center;
+    padding: 0.22rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 800;
+    border-radius: 999px;
+}}
+.badge {{
+    display: inline-flex;
+    align-items: center;
+    padding: 0.22rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 999px;
+}}
+.badge-success {{ background: var(--success-soft) !important; color: var(--success) !important; }}
+.badge-primary {{ background: var(--accent-soft) !important; color: var(--accent) !important; }}
+.badge-warning {{ background: var(--warning-soft) !important; color: var(--warning) !important; }}
+.badge-danger  {{ background: var(--danger-soft) !important; color: var(--danger) !important; }}
+.badge-neutral {{ background: var(--bg-elevated) !important; color: var(--text-secondary) !important; border: 1px solid var(--border-subtle) !important; }}
 
-        /* Tarjetas Glassmorphism Moderado */
-        .mac-glass-card {{
-            background: var(--bg-surface);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            border: 1px solid var(--border-subtle);
-            border-radius: 16px;
-            box-shadow: var(--shadow-card);
-            padding: 1rem 1.15rem;
-            margin-bottom: 0.75rem;
-            transition: transform 200ms ease, border-color 200ms ease;
-        }}
-        .mac-glass-card:hover {{
-            border-color: var(--border-strong);
-        }}
-
-        /* Cuadrícula Adaptable: 4/3 cols escritorio, 2 tablet, 1 móvil */
-        .responsive-kpi-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 0.75rem;
-            margin-bottom: 0.9rem;
-        }}
-        .responsive-card-grid {{
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 0.85rem;
-            margin-bottom: 0.9rem;
-        }}
-        @media (max-width: 1024px) {{
-            .responsive-kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-            .responsive-card-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-        }}
-        @media (max-width: 640px) {{
-            .responsive-kpi-grid, .responsive-card-grid {{ grid-template-columns: 1fr; }}
-            .block-container {{ padding-left: 0.75rem !important; padding-right: 0.75rem !important; }}
-            div.stButton > button, div.stDownloadButton > button {{
-                min-height: 46px !important;
-                font-size: 0.95rem !important;
-            }}
-        }}
-
-        .kpi-label {{
-            font-size: 0.72rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-secondary);
-        }}
-        .kpi-num {{
-            font-size: 1.45rem;
-            font-weight: 800;
-            color: var(--text-primary);
-            margin-top: 0.15rem;
-        }}
-        .kpi-meta {{
-            font-size: 0.76rem;
-            color: var(--text-muted);
-            margin-top: 0.15rem;
-        }}
-
-        /* Badges de Flota y Estado */
-        .flota-pill {{
-            display: inline-flex;
-            align-items: center;
-            padding: 0.22rem 0.6rem;
-            font-size: 0.72rem;
-            font-weight: 800;
-            border-radius: 999px;
-            letter-spacing: 0.02em;
-        }}
-        .badge {{
-            display: inline-flex;
-            align-items: center;
-            padding: 0.22rem 0.6rem;
-            font-size: 0.72rem;
-            font-weight: 700;
-            border-radius: 999px;
-        }}
-        .badge-success {{ background: var(--success-soft); color: var(--success); }}
-        .badge-primary {{ background: var(--accent-soft); color: var(--accent); }}
-        .badge-warning {{ background: var(--warning-soft); color: var(--warning); }}
-        .badge-danger  {{ background: var(--danger-soft); color: var(--danger); }}
-        .badge-neutral {{ background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border-subtle); }}
-
-        /* Botones limpios estilo iOS */
-        div.stButton > button, div.stDownloadButton > button {{
-            border-radius: 12px !important;
-            font-weight: 600 !important;
-            min-height: 40px !important;
-            transition: all 180ms ease !important;
-        }}
-        div.stButton > button[kind="primary"] {{
-            background-color: var(--accent) !important;
-            border: 1px solid var(--accent) !important;
-            color: #FFFFFF !important;
-        }}
-        div.stButton > button[kind="primary"]:hover {{
-            background-color: var(--accent-hover) !important;
-            border-color: var(--accent-hover) !important;
-        }}
-        div.stButton > button[kind="secondary"], div.stDownloadButton > button {{
-            background-color: var(--bg-surface) !important;
-            color: var(--text-primary) !important;
-            border: 1px solid var(--border-strong) !important;
-        }}
-
-        /* Inputs */
-        div[data-baseweb="input"] > div,
-        div[data-baseweb="select"] > div,
-        textarea {{
-            background-color: var(--bg-input) !important;
-            border-color: var(--border-subtle) !important;
-            border-radius: 12px !important;
-            color: var(--text-primary) !important;
-        }}
-
-        /* Tabs */
-        button[data-baseweb="tab"] {{
-            border-radius: 10px !important;
-            color: var(--text-secondary) !important;
-            font-weight: 600 !important;
-        }}
-        button[data-baseweb="tab"][aria-selected="true"] {{
-            color: var(--accent) !important;
-            background-color: var(--accent-soft) !important;
-        }}
-
-        .danger-zone {{
-            background: var(--danger-soft);
-            border: 1px solid var(--danger);
-            border-radius: 14px;
-            padding: 0.9rem 1.1rem;
-            margin: 0.6rem 0;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+div.stButton &gt; button, div.stDownloadButton &gt; button {{
+    border-radius: 12px !important;
+    font-weight: 600 !important;
+    min-height: 40px !important;
+}}
+div.stButton &gt; button[kind=&quot;primary&quot;] {{
+    background-color: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+    color: #FFFFFF !important;
+}}
+div.stButton &gt; button[kind=&quot;primary&quot;] * {{
+    color: #FFFFFF !important;
+}}
+div.stButton &gt; button[kind=&quot;primary&quot;]:hover {{
+    background-color: var(--accent-hover) !important;
+    border-color: var(--accent-hover) !important;
+}}
+div.stButton &gt; button[kind=&quot;secondary&quot;], div.stDownloadButton &gt; button {{
+    background-color: var(--bg-surface) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-strong) !important;
+}}
+div.stButton &gt; button[kind=&quot;secondary&quot;] *, div.stDownloadButton &gt; button * {{
+    color: var(--text-primary) !important;
+}}
+div[data-baseweb=&quot;input&quot;] &gt; div,
+div[data-baseweb=&quot;select&quot;] &gt; div,
+textarea {{
+    background-color: var(--bg-input) !important;
+    border-color: var(--border-strong) !important;
+    border-radius: 12px !important;
+    color: var(--text-primary) !important;
+}}
+div[data-baseweb=&quot;select&quot;] span,
+div[data-baseweb=&quot;input&quot;] input,
+textarea {{
+    color: var(--text-primary) !important;
+}}
+button[data-baseweb=&quot;tab&quot;] {{
+    border-radius: 10px !important;
+    color: var(--text-secondary) !important;
+    font-weight: 600 !important;
+}}
+button[data-baseweb=&quot;tab&quot;][aria-selected=&quot;true&quot;] {{
+    color: var(--accent) !important;
+    background-color: var(--accent-soft) !important;
+}}
+.danger-zone {{
+    background: var(--danger-soft) !important;
+    border: 1px solid var(--danger) !important;
+    border-radius: 14px !important;
+    padding: 0.9rem 1.1rem !important;
+    margin: 0.6rem 0 !important;
+}}
+&lt;/style&gt;
+"""
+    st.markdown(css, unsafe_allow_html=True)
 
 
 # ==============================================================================
-# 3. PERSISTENCIA SQLITE3 CON MODO WAL (CONCURRENCIA SEGURA EN PC SERVIDOR)
+# 3. PERSISTENCIA SQLITE3 CON MODO WAL
 # ==============================================================================
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
@@ -863,15 +837,15 @@ def generate_hours_template_excel() -> bytes:
 
 
 # ==============================================================================
-# 4. NAVEGACIÓN SIMPLIFICADA Y SELECTOR DE FLOTA (ESPACIO DEL PLANNER)
+# 4. NAVEGACIÓN SIMPLIFICADA Y SELECTOR DE FLOTA (SIN BUCLE DE PARPADEO)
 # ==============================================================================
 def init_ui_session_state() -> None:
     defaults = {
-        "current_view": "VISUALIZAR",   # VISUALIZAR | ACTUALIZAR | AGREGAR | ESTRATEGIA
+        "current_view": "VISUALIZAR",
         "user_role": "Planner",
         "active_flota": "Todas",
         "selected_component": None,
-        "theme_mode": "Sistema",
+        "theme_mode": "Oscuro",
         "vida_idx": 1,
         "vida_comp_ref": None,
     }
@@ -881,67 +855,40 @@ def init_ui_session_state() -> None:
 
 
 def render_compact_header_and_nav() -> None:
-    """Cabecera limpia apta para escritorio y móvil, con navegación directa de 4 botones."""
-    with st.sidebar:
-        st.markdown("### ⚙️ P.I.M.")
-        st.caption("Control de Inventarios · Planeamiento Mantenimiento Mina")
-        new_role = st.selectbox("Perfil activo:", ROLES_SISTEMA, index=ROLES_SISTEMA.index(st.session_state.user_role))
-        if new_role != st.session_state.user_role:
-            st.session_state.user_role = new_role
-            if new_role == "Campo-Tablet" and st.session_state.current_view not in ("VISUALIZAR", "ACTUALIZAR"):
-                st.session_state.current_view = "VISUALIZAR"
-            st.rerun()
-
-        new_theme = st.selectbox("Apariencia:", ["Claro", "Oscuro", "Sistema"], index=["Claro", "Oscuro", "Sistema"].index(st.session_state.theme_mode))
-        if new_theme != st.session_state.theme_mode:
-            st.session_state.theme_mode = new_theme
-            st.rerun()
-
-        st.markdown("---")
-        st.caption(f"🗄️ Base local: `{os.path.basename(DB_PATH)}`")
-
-    # Cabecera superior compacta
-    c_title, c_role, c_theme = st.columns([3.2, 1.0, 1.0])
+    # Cabecera visible debajo de la barra superior de Streamlit
+    c_title, c_role, c_theme = st.columns([2.8, 1.1, 1.1])
     with c_title:
         st.markdown(
-            """
-            <div style="padding-bottom:0.35rem;">
-                <span style="font-size:1.35rem; font-weight:800; color:var(--accent);">⚙️ P.I.M.</span>
-                <span style="font-size:1.05rem; font-weight:700; color:var(--text-primary); margin-left:0.35rem;">Control de Inventarios</span>
-                <div style="font-size:0.78rem; color:var(--text-secondary);">Planeamiento Mantenimiento Mina · Gestión por Flota</div>
-            </div>
-            """,
+            '&lt;div style=&quot;padding-bottom:0.3rem;&quot;&gt;&lt;span style=&quot;font-size:1.4rem;font-weight:900;color:var(--accent);&quot;&gt;⚙️ P.I.M.&lt;/span&gt; &lt;span style=&quot;font-size:1.05rem;font-weight:800;color:var(--text-primary);margin-left:0.3rem;&quot;&gt;CONTROL DE INVENTARIOS&lt;/span&gt;&lt;div style=&quot;font-size:0.78rem;color:var(--text-secondary);&quot;&gt;Planeamiento Mantenimiento Mina · Gestión por Flota&lt;/div&gt;&lt;/div&gt;',
             unsafe_allow_html=True,
         )
     with c_role:
-        st.markdown(
-            f"<div class='mac-glass-card' style='padding:0.45rem 0.7rem; text-align:center; font-size:0.8rem; font-weight:700;'>👤 {st.session_state.user_role}</div>",
-            unsafe_allow_html=True,
+        st.selectbox(
+            "Perfil:",
+            options=ROLES_SISTEMA,
+            key="user_role",
         )
     with c_theme:
-        t_sel = st.selectbox(
-            "Tema",
-            ["Claro", "Oscuro", "Sistema"],
-            index=["Claro", "Oscuro", "Sistema"].index(st.session_state.theme_mode),
-            label_visibility="collapsed",
-            key="top_theme_sel",
+        st.selectbox(
+            "Apariencia:",
+            options=["Oscuro", "Claro", "Sistema"],
+            key="theme_mode",
         )
-        if t_sel != st.session_state.theme_mode:
-            st.session_state.theme_mode = t_sel
-            st.rerun()
 
-    # Barra de navegación directa de máximo 4 ventanas (sin exceso de botones)
     role = st.session_state.user_role
+    if role == "Campo-Tablet" and st.session_state.current_view not in ("VISUALIZAR", "ACTUALIZAR"):
+        st.session_state.current_view = "VISUALIZAR"
+
     if role == "Campo-Tablet":
         views = [
-            ("VISUALIZAR", "👁️ Visualizar"),
-            ("ACTUALIZAR", "✏️ Actualizar / Foto"),
+            ("VISUALIZAR", "👁️ Visualizar Componentes"),
+            ("ACTUALIZAR", "✏️ Actualizar / Subir Foto"),
         ]
     else:
         views = [
             ("VISUALIZAR", "👁️ Visualizar"),
             ("ACTUALIZAR", "✏️ Actualizar / Foto"),
-            ("AGREGAR", "➕ Agregar"),
+            ("AGREGAR", "➕ Agregar Componente"),
             ("ESTRATEGIA", "📊 Estrategia y Backup"),
         ]
 
@@ -959,46 +906,41 @@ def render_compact_header_and_nav() -> None:
 
 
 def render_flota_selector(df_all: pd.DataFrame) -> pd.DataFrame:
-    """Permite a cada Planner elegir su Flota para sentir control propio sin duplicar tablas."""
     flotas = ["Todas"] + sorted(df_all["flota"].dropna().unique().tolist())
     if st.session_state.active_flota not in flotas:
         st.session_state.active_flota = "Todas"
 
     c_fl, c_badge = st.columns([2.2, 2.8])
     with c_fl:
-        sel = st.selectbox(
+        st.selectbox(
             "🚜 Espacio de Flota (Control del Planner):",
             options=flotas,
-            index=flotas.index(st.session_state.active_flota),
-            key="global_flota_picker",
+            key="active_flota",
         )
-        if sel != st.session_state.active_flota:
-            st.session_state.active_flota = sel
-            st.rerun()
     with c_badge:
         st.write("")
+        sel = st.session_state.active_flota
         if sel == "Todas":
-            st.markdown("<span class='badge badge-primary'>Vista Global: Todas las Flotas</span>", unsafe_allow_html=True)
+            st.markdown('<span class="badge badge-primary">Vista Global: Todas las Flotas</span>', unsafe_allow_html=True)
         else:
             st.markdown(get_flota_badge_html(sel), unsafe_allow_html=True)
 
-    return df_all if sel == "Todas" else df_all[df_all["flota"] == sel]
+    return df_all if st.session_state.active_flota == "Todas" else df_all[df_all["flota"] == st.session_state.active_flota]
 
 
 # ==============================================================================
-# 5. VENTANA 1: VISUALIZAR (POR FLOTA + TARJETAS + HOJA DE VIDA)
+# 5. VENTANA 1: VISUALIZAR (TARJETAS FUNCIONALES SIN CÓDIGO ROTO + HOJA DE VIDA)
 # ==============================================================================
 def render_view_visualizar() -> None:
     conn = get_connection()
     df_all = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, equipo_principal, codigo_equipo", conn)
     if df_all.empty:
         conn.close()
-        st.info("Aún no hay componentes. Ve a **➕ Agregar** para importar tu Excel SAP o registrar uno.")
+        st.info("Aún no hay componentes. Ve a **➕ Agregar Componente** para importar tu Excel SAP o registrar uno.")
         return
 
     df_flota = render_flota_selector(df_all)
 
-    # KPIs compactos de la flota activa
     total = len(df_flota)
     montados = int((df_flota["estado_actual"] == "Montado").sum())
     taller = int(df_flota["estado_actual"].isin(["Por Reparar", "Desmontado", "Salida por Reclamo"]).sum())
@@ -1006,19 +948,16 @@ def render_view_visualizar() -> None:
     hrs = float(df_flota["horas_acumuladas_totales"].sum())
     c_hr = (gasto / hrs) if hrs > 0 else 0.0
 
-    st.markdown(
-        f"""
-        <div class="responsive-kpi-grid">
-            <div class="mac-glass-card"><div class="kpi-label">Componentes</div><div class="kpi-num">{total}</div><div class="kpi-meta">Flota: {st.session_state.active_flota}</div></div>
-            <div class="mac-glass-card"><div class="kpi-label">Montados</div><div class="kpi-num" style="color:var(--success);">{montados}</div><div class="kpi-meta">En operación</div></div>
-            <div class="mac-glass-card"><div class="kpi-label">Por Reparar / Taller</div><div class="kpi-num" style="color:var(--warning);">{taller}</div><div class="kpi-meta">Atención pendiente</div></div>
-            <div class="mac-glass-card"><div class="kpi-label">Gasto · Costo/Hr</div><div class="kpi-num">${gasto:,.0f}</div><div class="kpi-meta" style="color:var(--danger); font-weight:700;">${c_hr:,.2f} USD/hr</div></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    kpi_html = (
+        '<div class="responsive-kpi-grid">'
+        f'<div class="mac-glass-card"><div class="kpi-label">Componentes</div><div class="kpi-num">{total}</div><div class="kpi-meta">Flota: {st.session_state.active_flota}</div></div>'
+        f'<div class="mac-glass-card"><div class="kpi-label">Montados</div><div class="kpi-num" style="color:var(--success);">{montados}</div><div class="kpi-meta">En operación</div></div>'
+        f'<div class="mac-glass-card"><div class="kpi-label">Por Reparar / Taller</div><div class="kpi-num" style="color:var(--warning);">{taller}</div><div class="kpi-meta">Atención pendiente</div></div>'
+        f'<div class="mac-glass-card"><div class="kpi-label">Gasto · Costo/Hr</div><div class="kpi-num">${gasto:,.0f}</div><div class="kpi-meta" style="color:var(--danger);font-weight:700;">${c_hr:,.2f} USD/hr</div></div>'
+        '</div>'
     )
+    st.markdown(kpi_html, unsafe_allow_html=True)
 
-    # Filtros simples (sin sobrecargar)
     f1, f2, f3 = st.columns([1.2, 1.2, 2.0])
     with f1:
         sel_eq = st.selectbox("Equipo:", ["Todos"] + sorted(df_flota["equipo_principal"].dropna().unique().tolist()))
@@ -1045,35 +984,48 @@ def render_view_visualizar() -> None:
         st.warning("No se encontraron componentes con esos filtros.")
         return
 
-    # Tarjetas con indicador claro de Flota + Estado + Vidas
-    cards_html = ['<div class="responsive-card-grid">']
-    for _, r in df_filt.head(18).iterrows():
-        c_hr_item = (r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"]) if r["horas_acumuladas_totales"] > 0 else 0.0
-        cards_html.append(
-            f"""
-            <div class="mac-glass-card">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.3rem; margin-bottom:0.35rem;">
-                    {get_flota_badge_html(r['flota'])}
-                    {get_status_badge_html(r['estado_actual'])}
-                </div>
-                <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">{r['codigo_equipo']} · Equipo {r['equipo_principal']}</div>
-                <div style="font-weight:700; font-size:0.94rem; margin:0.15rem 0 0.4rem 0;">{r['descripcion']}</div>
-                <div style="display:flex; justify-content:space-between; font-size:0.79rem; color:var(--text-secondary);">
-                    <span>🔄 <b>{format_vidas_label(r['ciclo_actual'])}</b></span>
-                    <span>⏱️ {float(r['horas_ciclo_actual']):,.0f} hrs</span>
-                    <span>💵 ${c_hr_item:,.2f}/hr</span>
-                </div>
-            </div>
-            """
-        )
-    cards_html.append("</div>")
-    st.markdown("".join(cards_html), unsafe_allow_html=True)
+    # Grilla de tarjetas con botones funcionales en cada tarjeta (3 por fila en escritorio, 1 en móvil)
+    rows_list = [r for _, r in df_filt.head(18).iterrows()]
+    for idx in range(0, len(rows_list), 3):
+        cols = st.columns(3)
+        for c_i in range(3):
+            if idx + c_i < len(rows_list):
+                r = rows_list[idx + c_i]
+                cod_item = str(r["codigo_equipo"])
+                c_hr_item = (r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"]) if r["horas_acumuladas_totales"] > 0 else 0.0
+                flota_pill = get_flota_badge_html(r["flota"])
+                status_pill = get_status_badge_html(r["estado_actual"])
+                vidas_txt = format_vidas_label(r["ciclo_actual"])
+
+                card_html = (
+                    '<div class="mac-glass-card">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.4rem;">{flota_pill}{status_pill}</div>'
+                    f'<div style="font-size:0.75rem;color:var(--text-muted);font-weight:700;">SAP: {cod_item} · Equipo {r["equipo_principal"]}</div>'
+                    f'<div style="font-weight:700;font-size:0.95rem;margin:0.2rem 0 0.45rem 0;">{r["descripcion"]}</div>'
+                    f'<div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text-secondary);">'
+                    f'<span>🔄 <b>{vidas_txt}</b></span>'
+                    f'<span>⏱️ {float(r["horas_ciclo_actual"]):,.0f} hrs</span>'
+                    f'<span>💵 ${c_hr_item:,.2f}/hr</span>'
+                    '</div></div>'
+                )
+                with cols[c_i]:
+                    st.markdown(card_html, unsafe_allow_html=True)
+                    b_ver, b_upd = st.columns(2)
+                    with b_ver:
+                        if st.button("👁️ Ver Ficha", key=f"ver_{cod_item}", use_container_width=True):
+                            st.session_state.selected_component = cod_item
+                            st.rerun()
+                    with b_upd:
+                        if st.button("✏️ Actualizar", key=f"upd_{cod_item}", type="primary", use_container_width=True):
+                            st.session_state.selected_component = cod_item
+                            st.session_state.current_view = "ACTUALIZAR"
+                            st.rerun()
 
     st.markdown("---")
     opciones = [f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} - {r['equipo_principal']})" for _, r in df_filt.iterrows()]
     cod_list = df_filt["codigo_equipo"].tolist()
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
-    sel_comp = st.selectbox("🔍 Ver Hoja de Vida del Componente:", opciones, index=idx_def)
+    sel_comp = st.selectbox("📋 Hoja de Vida Detallada del Componente:", opciones, index=idx_def)
     cod_sel = sel_comp.split(" | ")[0].strip()
     st.session_state.selected_component = cod_sel
 
@@ -1085,64 +1037,48 @@ def render_view_visualizar() -> None:
     total_vidas = max(0, int(comp["ciclo_actual"] or 1))
     nav_state = get_vidas_navigation_state(total_vidas, st.session_state.vida_idx)
 
-    # Hoja de vida + botón directo a Actualizar
-    c_det, c_go = st.columns([3.5, 1.2])
+    c_det, c_go = st.columns([3.4, 1.3])
     with c_det:
-        st.markdown(
-            f"""
-            <div class="mac-glass-card">
-                <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.35rem;">
-                    {get_flota_badge_html(comp['flota'])}
-                    {get_status_badge_html(comp['estado_actual'])}
-                    <span class="badge badge-neutral">🔄 {nav_state['label']}</span>
-                </div>
-                <h3 style="margin:0.1rem 0;">{comp['descripcion']}</h3>
-                <div style="font-size:0.84rem; color:var(--text-secondary);">
-                    <b>SAP:</b> {comp['codigo_equipo']} · <b>Equipo:</b> {comp['equipo_principal']} · <b>Serie:</b> {comp['serie']} · <b>Fabricante:</b> {comp['fabricante']}
-                </div>
-                <div style="font-size:0.84rem; color:var(--text-primary); margin-top:0.4rem;">
-                    ⏱️ <b>Hrs Ciclo:</b> {float(comp['horas_ciclo_actual']):,.1f} hrs &nbsp;|&nbsp;
-                    ⏳ <b>Hrs Totales:</b> {float(comp['horas_acumuladas_totales']):,.1f} hrs &nbsp;|&nbsp;
-                    💵 <b>Costo Acumulado:</b> ${float(comp['gasto_acumulado_total_usd']):,.2f} USD
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        ficha_html = (
+            '<div class="mac-glass-card">'
+            f'<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.35rem;">{get_flota_badge_html(comp["flota"])}{get_status_badge_html(comp["estado_actual"])}<span class="badge badge-neutral">🔄 {nav_state["label"]}</span></div>'
+            f'<h3 style="margin:0.15rem 0;">{comp["descripcion"]}</h3>'
+            f'<div style="font-size:0.84rem;color:var(--text-secondary);"><b>SAP:</b> {comp["codigo_equipo"]} · <b>Equipo:</b> {comp["equipo_principal"]} · <b>Serie:</b> {comp["serie"]} · <b>Fabricante:</b> {comp["fabricante"]}</div>'
+            f'<div style="font-size:0.86rem;color:var(--text-primary);margin-top:0.45rem;">⏱️ <b>Hrs Ciclo:</b> {float(comp["horas_ciclo_actual"]):,.1f} hrs &nbsp;|&nbsp; ⏳ <b>Hrs Totales:</b> {float(comp["horas_acumuladas_totales"]):,.1f} hrs &nbsp;|&nbsp; 💵 <b>Costo Acumulado:</b> ${float(comp["gasto_acumulado_total_usd"]):,.2f} USD</div>'
+            '</div>'
         )
+        st.markdown(ficha_html, unsafe_allow_html=True)
     with c_go:
         st.write("")
-        if st.button("✏️ Actualizar este componente", type="primary", use_container_width=True):
+        if st.button("✏️ Actualizar / Subir Foto", key="ficha_go_upd", type="primary", use_container_width=True):
             st.session_state.current_view = "ACTUALIZAR"
             st.rerun()
         if nav_state["show_nav"]:
             b1, b2 = st.columns(2)
             with b1:
-                if st.button("◀", disabled=nav_state["disable_prev"], use_container_width=True, help="Vida anterior"):
+                if st.button("◀ Vida Ant.", disabled=nav_state["disable_prev"], use_container_width=True):
                     st.session_state.vida_idx = max(1, nav_state["current"] - 1)
                     st.rerun()
             with b2:
-                if st.button("▶", disabled=nav_state["disable_next"], use_container_width=True, help="Vida siguiente"):
+                if st.button("Vida Sig. ▶", disabled=nav_state["disable_next"], use_container_width=True):
                     st.session_state.vida_idx = min(total_vidas, nav_state["current"] + 1)
                     st.rerun()
 
-    # 2 Últimas Fotos
     p1, p2 = st.columns(2)
     with p1:
-        st.markdown('<div class="mac-glass-card"><b>📷 Foto #1 (Previa)</b>', unsafe_allow_html=True)
+        st.markdown('<div class="mac-glass-card"><b>📷 Foto #1 (Previa)</b></div>', unsafe_allow_html=True)
         if comp["foto_1_path"] and os.path.exists(comp["foto_1_path"]):
             st.image(comp["foto_1_path"], use_container_width=True)
             st.caption(f"{comp['foto_1_fecha'] or ''} — {comp['foto_1_comentario'] or ''}")
         else:
             st.caption("Sin fotografía en espacio #1.")
-        st.markdown("</div>", unsafe_allow_html=True)
     with p2:
-        st.markdown('<div class="mac-glass-card"><b>📷 Foto #2 (Más Reciente)</b>', unsafe_allow_html=True)
+        st.markdown('<div class="mac-glass-card"><b>📷 Foto #2 (Más Reciente)</b></div>', unsafe_allow_html=True)
         if comp["foto_2_path"] and os.path.exists(comp["foto_2_path"]):
             st.image(comp["foto_2_path"], use_container_width=True)
             st.caption(f"{comp['foto_2_fecha'] or ''} — {comp['foto_2_comentario'] or ''}")
         else:
             st.caption("Sin fotografía en espacio #2.")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     df_eventos = pd.read_sql_query("SELECT * FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC", conn, params=(cod_sel,))
     conn.close()
@@ -1177,24 +1113,18 @@ def render_view_actualizar() -> None:
     opciones = [f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} - {r['equipo_principal']}) [{r['estado_actual']}]" for _, r in df_flota.iterrows()]
     cod_list = df_flota["codigo_equipo"].tolist()
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
-    sel_comp = st.selectbox("Componente a actualizar:", opciones, index=idx_def)
+    sel_comp = st.selectbox("Seleccionar Componente a Actualizar:", opciones, index=idx_def)
     cod_sel = sel_comp.split(" | ")[0].strip()
     st.session_state.selected_component = cod_sel
     comp_row = df_flota[df_flota["codigo_equipo"] == cod_sel].iloc[0]
 
-    st.markdown(
-        f"""
-        <div class="mac-glass-card">
-            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.25rem;">
-                {get_flota_badge_html(comp_row['flota'])}
-                {get_status_badge_html(comp_row['estado_actual'])}
-                <span class="badge badge-neutral">🔄 {format_vidas_label(comp_row['ciclo_actual'])}</span>
-            </div>
-            <b>{comp_row['codigo_equipo']}</b> — {comp_row['descripcion']} · Equipo: <b>{comp_row['equipo_principal']}</b> · Hrs Ciclo: <b>{float(comp_row['horas_ciclo_actual']):,.1f}</b>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    resumen_html = (
+        '<div class="mac-glass-card">'
+        f'<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.3rem;">{get_flota_badge_html(comp_row["flota"])}{get_status_badge_html(comp_row["estado_actual"])}<span class="badge badge-neutral">🔄 {format_vidas_label(comp_row["ciclo_actual"])}</span></div>'
+        f'<b>{comp_row["codigo_equipo"]}</b> — {comp_row["descripcion"]} · Equipo: <b>{comp_row["equipo_principal"]}</b> · Hrs Ciclo: <b>{float(comp_row["horas_ciclo_actual"]):,.1f}</b>'
+        '</div>'
     )
+    st.markdown(resumen_html, unsafe_allow_html=True)
 
     role = st.session_state.user_role
     if role == "Campo-Tablet":
@@ -1204,7 +1134,6 @@ def render_view_actualizar() -> None:
     else:
         tab_foto, tab_estado, tab_horas = st.tabs(["📸 Foto y Comentario", "🔄 Estado, OT/OC y Costos", "⏱️ Cargar Horas (Todas las Flotas)"])
 
-    # --- PESTAÑA DIRECTA: FOTO Y COMENTARIO (FIFO 2 FOTOS) ---
     with tab_foto:
         p1, p2 = st.columns(2)
         with p1:
@@ -1249,7 +1178,6 @@ def render_view_actualizar() -> None:
                     conn.close()
                     st.success("Comentario guardado.")
 
-    # --- PESTAÑA ESTADO, OT/OC Y COSTOS ---
     if tab_estado is not None:
         with tab_estado:
             c1, c2 = st.columns(2)
@@ -1304,7 +1232,7 @@ def render_view_actualizar() -> None:
             com_est = st.text_input("Comentario del movimiento:")
             confirm_baja = True
             if nuevo_estado == "De Baja":
-                st.markdown("<div class='danger-zone'>⚠️ Dar de baja retirará el componente de la operación activa.</div>", unsafe_allow_html=True)
+                st.markdown('<div class="danger-zone">⚠️ Dar de baja retirará el componente de la operación activa.</div>', unsafe_allow_html=True)
                 confirm_baja = st.checkbox("Confirmo dar de baja este componente.")
 
             if st.button("Guardar Estado y Costos", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
@@ -1340,7 +1268,6 @@ def render_view_actualizar() -> None:
                 st.success(f"Componente `{cod_sel}` actualizado a **{nuevo_estado}**.")
                 st.rerun()
 
-    # --- PESTAÑA CARGA DE HORAS GLOBAL ---
     if tab_horas is not None:
         with tab_horas:
             st.caption("Una sola carga alimenta y actualiza las horas de **todos los componentes Montados de todas las flotas**.")
@@ -1381,7 +1308,7 @@ def render_view_actualizar() -> None:
                 if not ok_hq:
                     st.error(err_hq)
                 else:
-                    n_upd, det = apply_hours_to_mounted_components([{"target_type": "equipo_principal", "target_value": eq_quick, "mode": "add", "value": h_q_val}], role, f"Rápida ({eq_quick})")
+                    n_upd, _ = apply_hours_to_mounted_components([{"target_type": "equipo_principal", "target_value": eq_quick, "mode": "add", "value": h_q_val}], role, f"Rápida ({eq_quick})")
                     st.success(f"Se sumaron +{h_q_val} hrs a {n_upd} componente(s) de {eq_quick}.")
 
 
@@ -1392,14 +1319,13 @@ def render_view_agregar() -> None:
     tab_manual, tab_sap = st.tabs(["➕ Nuevo Componente", "🔄 Cargar Lista SAP (.xlsx)"])
 
     with tab_manual:
-        st.markdown('<div class="mac-glass-card">', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
             cod_m = st.text_input("Código Equipo SAP *:", placeholder="10045990")
             desc_m = st.text_input("Descripción del Componente *:", placeholder="MOTOR DE GIRO TRASERO")
             ubic_m = st.text_input("Ubicación Técnica SAP *:", value="SPCC-TOQ-MIN-495H-SHO009-GIRO")
             flota_prev, eq_prev = parse_ubicacion_tecnica(ubic_m)
-            st.markdown(f"{get_flota_badge_html(flota_prev)} &nbsp; Equipo: **{eq_prev}**", unsafe_allow_html=True)
+            st.markdown(f'{get_flota_badge_html(flota_prev)} &nbsp; Equipo detectado: <b>{eq_prev}</b>', unsafe_allow_html=True)
             crit_m = st.selectbox("Criticidad ABC:", ["A", "B", "C"])
         with c2:
             fab_m = st.text_input("Fabricante:", placeholder="KOMATSU / CAT")
@@ -1434,7 +1360,6 @@ def render_view_agregar() -> None:
                     st.error(f"El código `{cod_m.strip()}` ya existe.")
                 finally:
                     conn.close()
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_sap:
         st.download_button(
@@ -1518,9 +1443,6 @@ def main() -> None:
     render_compact_header_and_nav()
 
     view = st.session_state.current_view
-    if st.session_state.user_role == "Campo-Tablet" and view not in ("VISUALIZAR", "ACTUALIZAR"):
-        view = "VISUALIZAR"
-
     if view == "VISUALIZAR":
         render_view_visualizar()
     elif view == "ACTUALIZAR":
