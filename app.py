@@ -4,19 +4,29 @@
 
 P.I.M. - CONTROL DE INVENTARIOS | PLANEAMIENTO MANTENIMIENTO MINA
 
-Versión 100% Nativa Streamlit (CERO etiquetas HTML):
+Versión Producción Auditada (100% Nativa Streamlit - CERO HTML):
 
-- Imposible que aparezca código CSS o HTML en pantalla en ninguna versión o configuración de Streamlit.
+1. Las 4 Flotas Fijas son SIEMPRE: PALAS, PERFOS, VOLQUETES, AUXILIARES.
 
-- Flujo directo en 4 pestañas:
+   - Incluye migración automática en cada arranque: si la base de datos tenía modelos viejos
 
-  1. Visualizar (Flota, KPIs, Tarjetas con etiquetas de color nativas y Hoja de Vida con Fotos FIFO)
+     como '410A', '495H' o '994F' en la columna `flota`, los mueve automáticamente a `modelo`
 
-  2. Actualizar y Fotos (Foto FIFO, Cambio de Estado/OC/Kit y Carga Masiva de Horas)
+     y corrige `flota` a PALAS, PERFOS, VOLQUETES o AUXILIARES.
 
-  3. Agregar y SAP (Alta individual e importación de Inventario SAP Nov.xlsx)
+2. Jerarquía clara: Flota (PALAS/PERFOS/VOLQUETES/AUXILIARES) -> Modelo (ej. 4100A, 495HR, PV271, 797F, 994F)
 
-  4. Estrategia y Backup (Gráfico $/hr por flota, Ranking y Descarga Excel .xlsx / SQLite .db)
+   -> Equipo Principal (ej. PALA4 / SHO004 / PATQ4, PALA8 / SHO008 / PATQ8).
+
+3. Log de Acción por Ciclo e Historial de Corridas por Tiempo:
+
+   - Resumen consolidado por cada Ciclo/Vida (Inicio, Fin/Último mov., Equipos donde operó, Horas corridas,
+
+     Kits/OC/OT y Costo por Ciclo) + Línea de tiempo cronológica de cada acción y corrida de horas.
+
+4. Ciclo estricto de 2 fotografías (FIFO): al tomar/subir la 3ra foto se borra físicamente la #1,
+
+   la #2 pasa a #1 y la nueva queda en #2.
 
 """
 
@@ -48,7 +58,7 @@ from PIL import Image
 
 # ==============================================================================
 
-# 0. CONFIGURACIÓN INICIAL Y CONSTANTES
+# 0. CONFIGURACIÓN INICIAL Y CATÁLOGOS DE LAS 4 FLOTAS FIJAS
 
 # ==============================================================================
 
@@ -76,15 +86,79 @@ DEFAULT_SAP_EXCEL = os.path.join(BASE_DIR, "Inventario SAP Nov.xlsx")
 
 
 
+# LAS 4 FLOTAS ÚNICAS Y DEFINIDAS DEL SISTEMA
+
+FLOTAS_MACRO = ["PALAS", "PERFOS", "VOLQUETES", "AUXILIARES"]
+
+
+
+CATALOGO_FLOTAS: Dict[str, Dict[str, List[str]]] = {
+
+    "PALAS": {
+
+        "4100A": ["PALA4 (SHO004 / PATQ4)", "PALA5 (SHO005 / PATQ5)", "PALA6 (SHO006 / PATQ6)"],
+
+        "495HR": ["PALA7 (SHO007 / PATQ7)", "PALA8 (SHO008 / PATQ8)", "PALA9 (SHO009 / PATQ9)"],
+
+        "4100XPC": ["PALA10 (SHO010 / PATQ10)", "PALA11 (SHO011 / PATQ11)"],
+
+        "PC8000": ["EXC7001 (PALA HIDRÁULICA)"],
+
+    },
+
+    "PERFOS": {
+
+        "49HR": ["PER001", "PER002", "PER003"],
+
+        "PV271": ["PER004", "PER005", "PER006"],
+
+        "PV351": ["PER007", "PER008"],
+
+        "MD6640": ["PER009", "PER010"],
+
+    },
+
+    "VOLQUETES": {
+
+        "797F": ["VOL001", "VOL002", "VOL003", "VOL004", "VOL005"],
+
+        "793F": ["VOL010", "VOL011", "VOL012", "VOL015"],
+
+        "930E": ["VOL020", "VOL021", "VOL022", "VOL025"],
+
+        "980E": ["VOL030", "VOL031", "VOL032"],
+
+    },
+
+    "AUXILIARES": {
+
+        "994F": ["FLO005 (CARGADOR)", "FLO006 (CARGADOR)"],
+
+        "994K": ["FLO007 (CARGADOR)", "FLO008 (CARGADOR)"],
+
+        "D11T": ["TRACT001", "TRACT002", "TRACT003"],
+
+        "854K": ["WT001 (WHEELDOZER)", "WT002 (WHEELDOZER)"],
+
+        "24M": ["MOTO001", "MOTO002"],
+
+        "777G": ["CIST001", "CIST002"],
+
+    },
+
+}
+
+
+
 ESTADOS_COMPONENTE = [
 
     "Montado",
 
-    "Desmontado",
-
     "Por Reparar",
 
     "Reparado",
+
+    "Desmontado",
 
     "Salida por Reclamo",
 
@@ -136,7 +210,155 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 # ==============================================================================
 
-# 1. ETIQUETAS VISUALES 100% NATIVAS DE STREAMLIT (SIN HTML NI CSS)
+# 1. CLASIFICACIÓN INTELIGENTE SAP: FLOTA (4 FIJAS), MODELO, EQUIPO Y ESTADO
+
+# ==============================================================================
+
+def normalize_model_name(raw_model: str) -> str:
+
+    m = str(raw_model or "").upper().strip()
+
+    if m in ("410A", "4100"):
+
+        return "4100A"
+
+    if m in ("495H", "495"):
+
+        return "495HR"
+
+    return m if m else "SIN_MODELO"
+
+
+
+
+
+def infer_flota_from_model_or_unit(modelo: str, equipo: str, ubic_tec: str = "") -> str:
+
+    """Garantiza que SIEMPRE devuelva una de las 4 flotas: PALAS, PERFOS, VOLQUETES o AUXILIARES."""
+
+    m_up = normalize_model_name(modelo)
+
+    e_up = str(equipo or "").upper().strip()
+
+    u_up = str(ubic_tec or "").upper().strip()
+
+    joined = f"{m_up} {e_up} {u_up}"
+
+
+
+    for flota_name, modelos_dict in CATALOGO_FLOTAS.items():
+
+        if m_up in modelos_dict:
+
+            return flota_name
+
+
+
+    if any(k in joined for k in ("PERF", "PER0", "PV271", "PV351", "49HR", "MD6")):
+
+        return "PERFOS"
+
+    if any(k in joined for k in ("VOL", "CAM", "TRK", "797", "793", "930E", "980E", "830E")):
+
+        return "VOLQUETES"
+
+    if any(k in joined for k in ("AUX", "FLO", "994", "D11", "D10", "854", "24M", "16M", "777", "CIST", "TRACT", "MOTO", "WT0")):
+
+        return "AUXILIARES"
+
+    return "PALAS"
+
+
+
+
+
+def infer_estado_from_ubicacion_sap(ubic_tec: str, current_status: Optional[str] = None) -> str:
+
+    """Deduce el estado según la Ubicación Técnica SAP."""
+
+    u = str(ubic_tec or "").upper().strip()
+
+    if not u:
+
+        return current_status or "Montado"
+
+    if any(k in u for k in ("BAJA", "SCRAP", "CHATARRA")):
+
+        return "De Baja"
+
+    if any(k in u for k in ("RECLAMO", "GARANT", "PROV")):
+
+        return "Salida por Reclamo"
+
+    if any(k in u for k in ("POR REPARAR", "TALLER", "REPARAC", "OVERHAUL", "EVALUAC")):
+
+        return "Por Reparar"
+
+    if any(k in u for k in ("REPARADO", "LISTO", "ALMACEN", "BODEGA", "STOCK", "STAND")):
+
+        return "Reparado"
+
+    if any(k in u for k in ("DESMONT", "PISO", "PATIO", "BAHIA")):
+
+        return "Desmontado"
+
+    if any(k in u for k in ("NUEVO",)):
+
+        return "Nuevo"
+
+    if any(k in u for k in ("SHO", "PALA", "PATQ", "PER", "VOL", "FLO", "TRACT", "MOTO", "CIST")):
+
+        return "Montado"
+
+    return current_status or "Montado"
+
+
+
+
+
+def parse_ubicacion_tecnica(ubic_tec: str) -> Tuple[str, str, str, str]:
+
+    """
+
+    Extrae de la Ubicación Técnica SAP (ej. SPCC-TOQ-MIN-4100A-SHO004-PROP):
+
+    - `flota`: PALAS | PERFOS | VOLQUETES | AUXILIARES
+
+    - `modelo`: 4to bloque normalizado (ej. 4100A, 495HR, PV271, 797F, 994F)
+
+    - `equipo_principal`: 5to bloque (ej. SHO004, SHO008, PER004, VOL002, FLO005)
+
+    - `estado_sap`: estado deducido según la ubicación técnica
+
+    """
+
+    if not ubic_tec or pd.isna(ubic_tec):
+
+        return ("PALAS", "4100A", "SIN_EQUIPO", "Montado")
+
+
+
+    bloques = [b.strip() for b in str(ubic_tec).strip().split("-") if b.strip()]
+
+    raw_mod = bloques[3].upper() if len(bloques) >= 4 else "4100A"
+
+    modelo = normalize_model_name(raw_mod)
+
+    equipo_principal = bloques[4].upper() if len(bloques) >= 5 else "SIN_EQUIPO"
+
+    flota = infer_flota_from_model_or_unit(modelo, equipo_principal, str(ubic_tec))
+
+    estado_sap = infer_estado_from_ubicacion_sap(str(ubic_tec))
+
+    return flota, modelo, equipo_principal, estado_sap
+
+
+
+
+
+# ==============================================================================
+
+# 2. UTILIDADES DE VALIDACIÓN, ETIQUETAS NATIVAS Y VIDAS
 
 # ==============================================================================
 
@@ -236,29 +458,23 @@ def validate_numeric_input(
 
 
 
-def get_native_badges_markdown(flota: str, estado: str, vidas: int) -> str:
+def get_native_badges_markdown(flota: str, modelo: str, estado: str, vidas: int) -> str:
 
-    """
+    flota_clean = str(flota or "PALAS").upper().strip()
 
-    Usa sintaxis nativa de etiquetas de color de Streamlit (:color-background[...])
+    modelo_clean = str(modelo or "S/M").upper().strip()
 
-    usando únicamente Markdown nativo.
 
-    """
-
-    flota_clean = str(flota or "SIN_FLOTA").strip()
 
     flota_color_map = {
 
-        "495H": "red",
+        "PALAS": "red",
 
-        "410A": "blue",
+        "PERFOS": "blue",
 
-        "994F": "green",
+        "VOLQUETES": "orange",
 
-        "793F": "orange",
-
-        "797F": "violet",
+        "AUXILIARES": "green",
 
     }
 
@@ -290,7 +506,17 @@ def get_native_badges_markdown(flota: str, estado: str, vidas: int) -> str:
 
 
 
-    return f":{f_col}-background[**🚜 Flota {flota_clean}**] &nbsp; :{e_col}-background[**● {estado}**] &nbsp; :gray-background[**🔄 {v_lbl}**]"
+    return (
+
+        f":{f_col}-background[**🚜 {flota_clean}**] &nbsp; "
+
+        f":violet-background[**⚙️ Mod. {modelo_clean}**] &nbsp; "
+
+        f":{e_col}-background[**● {estado}**] &nbsp; "
+
+        f":gray-background[**🔄 {v_lbl}**]"
+
+    )
 
 
 
@@ -298,7 +524,7 @@ def get_native_badges_markdown(flota: str, estado: str, vidas: int) -> str:
 
 # ==============================================================================
 
-# 2. BASE DE DATOS SQLITE3 (MODO WAL PARA CONCURRENCIA EN RED LOCAL)
+# 3. BASE DE DATOS SQLITE3 CON AUTO-CORRECCIÓN DE FLOTAS Y MODELOS
 
 # ==============================================================================
 
@@ -324,24 +550,6 @@ def get_connection() -> sqlite3.Connection:
 
 
 
-def parse_ubicacion_tecnica(ubic_tec: str) -> Tuple[str, str]:
-
-    if not ubic_tec or pd.isna(ubic_tec):
-
-        return ("SIN_FLOTA", "SIN_EQUIPO")
-
-    bloques = [b.strip() for b in str(ubic_tec).strip().split("-") if b.strip()]
-
-    flota = bloques[3] if len(bloques) >= 4 else "SIN_FLOTA"
-
-    equipo_principal = bloques[4] if len(bloques) >= 5 else "SIN_EQUIPO"
-
-    return flota, equipo_principal
-
-
-
-
-
 def init_db() -> None:
 
     conn = get_connection()
@@ -361,6 +569,8 @@ def init_db() -> None:
             descripcion TEXT,
 
             flota TEXT,
+
+            modelo TEXT,
 
             equipo_principal TEXT,
 
@@ -403,6 +613,64 @@ def init_db() -> None:
         """
 
     )
+
+
+
+    # Asegurar que exista la columna `modelo` aunque la base haya sido creada con el código anterior
+
+    cur.execute("PRAGMA table_info(componentes)")
+
+    existing_cols = [r["name"] for r in cur.fetchall()]
+
+    if "modelo" not in existing_cols:
+
+        cur.execute("ALTER TABLE componentes ADD COLUMN modelo TEXT DEFAULT '4100A'")
+
+
+
+    # Normalizar SIEMPRE cualquier fila que tenga un modelo ('410A', '495H', '994F') metido en `flota`
+
+    cur.execute("SELECT codigo_equipo, flota, modelo, equipo_principal, ubicacion_tecnica FROM componentes")
+
+    for r in cur.fetchall():
+
+        f_val = str(r["flota"] or "").upper().strip()
+
+        m_val = str(r["modelo"] or "").upper().strip()
+
+        ubic = str(r["ubicacion_tecnica"] or "")
+
+        eq = str(r["equipo_principal"] or "")
+
+
+
+        if f_val not in FLOTAS_MACRO or not m_val or m_val in ("SIN_MODELO", "NONE", "NAN"):
+
+            flota_calc, mod_calc, _, _ = parse_ubicacion_tecnica(ubic)
+
+            # Si en f_val había un modelo como 410A, 495H, 994F, rescatarlo como modelo
+
+            if f_val not in FLOTAS_MACRO and f_val not in ("", "SIN_FLOTA", "NONE"):
+
+                mod_final = normalize_model_name(f_val)
+
+            elif m_val and m_val not in ("SIN_MODELO", "NONE", "NAN"):
+
+                mod_final = normalize_model_name(m_val)
+
+            else:
+
+                mod_final = mod_calc
+
+            flota_final = f_val if f_val in FLOTAS_MACRO else infer_flota_from_model_or_unit(mod_final, eq, ubic)
+
+            cur.execute(
+
+                "UPDATE componentes SET flota = ?, modelo = ? WHERE codigo_equipo = ?",
+
+                (flota_final, mod_final, r["codigo_equipo"]),
+
+            )
 
 
 
@@ -496,31 +764,13 @@ def init_db() -> None:
 
     conn.commit()
 
-    cur.execute("SELECT COUNT(*) as total FROM componentes")
-
-    count = cur.fetchone()["total"]
-
     conn.close()
 
 
 
-    if count == 0:
+    # Garantizar que existan componentes semilla de las 4 flotas y el ejemplo BRASWIT231
 
-        if os.path.exists(DEFAULT_SAP_EXCEL):
-
-            try:
-
-                df_sap = pd.read_excel(DEFAULT_SAP_EXCEL, sheet_name="Sheet1")
-
-                import_sap_dataframe(df_sap, usuario_rol="Sistema (Auto-Init)")
-
-            except Exception:
-
-                seed_initial_demo_data()
-
-        else:
-
-            seed_initial_demo_data()
+    seed_initial_demo_data()
 
 
 
@@ -532,21 +782,21 @@ def seed_initial_demo_data() -> None:
 
     demo_components = [
 
-        ("10045801", "MOTOR DE GIRO DELANTERO AC P&H", "495H", "SHO009", "SPCC-TOQ-MIN-495H-SHO009-GIRO", "A", "KOMATSU / P&H", "SN-495H-8821", "Montado", 2, 18450.0, 4250.0, 68500.0, 24500.0, None, None, None, None, None, None, now_str),
+        ("BRASWIT231", "INTERRUPTOR / BRAKE SWITCH DE IZAJE", "PALAS", "495HR", "PALA8 (SHO008 / PATQ8)", "SPCC-TOQ-MIN-495HR-SHO008-TALLER", "A", "KOMATSU / P&H", "SN-BRK-231", "Por Reparar", 1, 7850.0, 7850.0, 9800.0, 9800.0, None, None, None, None, None, None, now_str),
 
-        ("10045802", "TRANSMISION DE GIRO DERECHA", "495H", "SHO009", "SPCC-TOQ-MIN-495H-SHO009-GIRO", "A", "KOMATSU / P&H", "SN-495H-9104", "Montado", 1, 6120.0, 6120.0, 12400.0, 12400.0, None, None, None, None, None, None, now_str),
+        ("10045801", "MOTOR DE GIRO DELANTERO AC P&H", "PALAS", "495HR", "PALA9 (SHO009 / PATQ9)", "SPCC-TOQ-MIN-495HR-SHO009-GIRO", "A", "KOMATSU / P&H", "SN-495H-8821", "Montado", 2, 18450.0, 4250.0, 68500.0, 24500.0, None, None, None, None, None, None, now_str),
 
-        ("10045803", "MOTOR DE EMPUJE (CROWD) PRINCIPAL", "495H", "SHO008", "SPCC-TOQ-MIN-495H-SHO008-EMPU", "A", "SIEMENS", "SN-SIE-33019", "Montado", 3, 27800.0, 3100.0, 94200.0, 31200.0, None, None, None, None, None, None, now_str),
+        ("10045806", "REDUCTOR DE TRASLACION (PROPEL) DER", "PALAS", "4100A", "PALA4 (SHO004 / PATQ4)", "SPCC-TOQ-MIN-4100A-SHO004-ALMACEN", "A", "BUCYRUS / CAT", "BUC-410-1120", "Reparado", 2, 19500.0, 0.0, 82000.0, 29000.0, None, None, None, None, None, None, now_str),
 
-        ("10045804", "CILINDRO HIDRAULICO DE LEVANTE IZQ", "994F", "FLO005", "SPCC-TOQ-MIN-994F-FLO005-HIDR", "A", "CATERPILLAR", "CAT-994-7741", "Montado", 2, 15900.0, 5400.0, 48000.0, 18500.0, None, None, None, None, None, None, now_str),
+        ("10045807", "COMPRESOR DE AIRE PRINCIPAL", "PALAS", "4100A", "PALA4 (SHO004 / PATQ4)", "SPCC-TOQ-MIN-4100A-SHO004-NEUM", "B", "SULLAIR", "SUL-88392", "Montado", 1, 4890.0, 4890.0, 6200.0, 6200.0, None, None, None, None, None, None, now_str),
 
-        ("10045805", "BOMBA HIDRAULICA DE IMPLEMENTOS", "994F", "FLO005", "SPCC-TOQ-MIN-994F-FLO005-HIDR", "A", "REXROTH / CAT", "REX-55821", "Por Reparar", 2, 14200.0, 7100.0, 39500.0, 14500.0, None, None, None, None, None, None, now_str),
+        ("PERCAB402", "CABEZAL DE ROTACION PRINCIPAL", "PERFOS", "PV271", "PER004", "SPCC-TOQ-MIN-PV271-PER004-ROTA", "A", "EPIROC / INGERSOLL", "EP-PV271-901", "Montado", 2, 12400.0, 3800.0, 54000.0, 21000.0, None, None, None, None, None, None, now_str),
 
-        ("10045806", "REDUCTOR DE TRASLACION (PROPEL) DER", "410A", "SHO004", "SPCC-TOQ-MIN-410A-SHO004-PROP", "A", "BUCYRUS / CAT", "BUC-410-1120", "Reparado", 2, 19500.0, 0.0, 82000.0, 29000.0, None, None, None, None, None, None, now_str),
+        ("VOLMND797", "MANDO FINAL TRASERO DERECHO", "VOLQUETES", "797F", "VOL002", "SPCC-TOQ-MIN-797F-VOL002-TREN", "A", "CATERPILLAR", "CAT-797-4410", "Montado", 1, 9200.0, 9200.0, 115000.0, 115000.0, None, None, None, None, None, None, now_str),
 
-        ("10045807", "COMPRESOR DE AIRE PRINCIPAL", "410A", "SHO004", "SPCC-TOQ-MIN-410A-SHO004-NEUM", "B", "SULLAIR", "SUL-88392", "Montado", 1, 4890.0, 4890.0, 6200.0, 6200.0, None, None, None, None, None, None, now_str),
+        ("10045804", "CILINDRO HIDRAULICO DE LEVANTE IZQ", "AUXILIARES", "994F", "FLO005 (CARGADOR)", "SPCC-TOQ-MIN-994F-FLO005-HIDR", "A", "CATERPILLAR", "CAT-994-7741", "Montado", 2, 15900.0, 5400.0, 48000.0, 18500.0, None, None, None, None, None, None, now_str),
 
-        ("10045808", "FRENO DISCO DE IZAJE (HOIST) IZQ", "495H", "SHO009", "SPCC-TOQ-MIN-495H-SHO009-IZAJ", "B", "KOMATSU / P&H", "PH-BRK-601", "Desmontado", 1, 7850.0, 7850.0, 9800.0, 9800.0, None, None, None, None, None, None, now_str),
+        ("10045805", "BOMBA HIDRAULICA DE IMPLEMENTOS", "AUXILIARES", "994F", "FLO005 (CARGADOR)", "SPCC-TOQ-MIN-994F-FLO005-TALLER", "A", "REXROTH / CAT", "REX-55821", "Por Reparar", 2, 14200.0, 7100.0, 39500.0, 14500.0, None, None, None, None, None, None, now_str),
 
     ]
 
@@ -562,7 +812,7 @@ def seed_initial_demo_data() -> None:
 
         INSERT OR IGNORE INTO componentes (
 
-            codigo_equipo, descripcion, flota, equipo_principal, ubicacion_tecnica,
+            codigo_equipo, descripcion, flota, modelo, equipo_principal, ubicacion_tecnica,
 
             criticidad_abc, fabricante, serie, estado_actual, ciclo_actual,
 
@@ -572,7 +822,7 @@ def seed_initial_demo_data() -> None:
 
             foto_2_path, foto_2_fecha, foto_2_comentario, ultima_actualizacion_horas
 
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         """,
 
@@ -582,43 +832,49 @@ def seed_initial_demo_data() -> None:
 
 
 
-    demo_events = [
+    # Si BRASWIT231 recién se insertó y no tiene eventos, agregar su evento demostrativo
 
-        ("10045801", 1, "2025-11-15 08:30:00", "Planner", "Intervención / Reparación", "Reparado", "SHO009", 14200.0, 0.0, "N/A", "PCR por Horas", "N/A - Cambio Programado (PCR)", "OT-40089120", "4500192831", "KOMATSU MITSUI MAQUINARIAS PERU", "Kit + Reparación General", "Kit de rodamientos aislados SKF + Sellos Viton + Rebobinado rotor", 6500.0, 37500.0, 44000.0, "Overhaul mayor ciclo 1 completado según estándar OEM.", None),
+    cur.execute("SELECT COUNT(*) as c FROM historial_eventos WHERE codigo_equipo = 'BRASWIT231'")
 
-        ("10045801", 2, "2026-02-10 14:15:00", "Planner", "Montaje en Equipo", "Montado", "SHO009", 14200.0, 0.0, "Southern", "PCR por Horas", "N/A - Cambio Programado (PCR)", "OT-40095410", "4500198004", "TALLER ELECTRICO SPCC", "Kit de Mantenimiento", "Kit de montaje, acoplamiento y sensores PT100", 24500.0, 0.0, 24500.0, "Montado en Pala SHO009 durante parada programada. Inicia Ciclo 2.", None),
+    if cur.fetchone()["c"] == 0:
 
-        ("10045802", 1, "2026-04-02 10:00:00", "Planner", "Intervención / Reparación", "Montado", "SHO009", 3500.0, 0.0, "Southern", "N/A", "N/A - Cambio Programado (PCR)", "OT-40101220", "4500201145", "FERREYROS / TALLER CENTRAL", "Kit de Mantenimiento", "Kit de sellos de alta presión y respiradero", 12400.0, 0.0, 12400.0, "Mantenimiento preventivo intermedio en PM de pala.", None),
+        cur.execute(
 
-        ("10045806", 2, "2026-09-18 16:40:00", "Planner", "Intervención / Reparación", "Reparado", "SHO004", 19500.0, 0.0, "Contratista", "Falla por Condición", "Desgaste prematuro de rodamientos / bujes", "OT-40118900", "4500219087", "FLSMIDTH / MAESTRANZA SUR", "Kit + Reparación General", "Kit planetario etapa 1 y 2 + Rectificado de alojamiento", 9000.0, 20000.0, 29000.0, "Componente reparado y preservado en bahía de listos.", None),
+            """
 
-    ]
+            INSERT INTO historial_eventos (
+
+                codigo_equipo, numero_ciclo, fecha_hora, usuario_rol, tipo_operacion,
+
+                estado_asignado, equipo_principal, horas_componente_evento, horas_sumadas,
+
+                instalado_por, motivo_cambio, modo_falla, numero_ot, numero_oc,
+
+                proveedor_reparador, tipo_intervencion, detalle_kit, costo_kit_usd,
+
+                costo_reparacion_usd, costo_total_evento_usd, comentario_bitacora, foto_path
+
+            ) VALUES (
+
+                'BRASWIT231', 1, ?, 'Planner (PALAS)', 'Desmontaje / Bitácora Planner',
+
+                'Por Reparar', 'PALA8 (SHO008 / PATQ8)', 7850.0, 0.0,
+
+                'Southern', 'Falla por Condición', 'Desgaste prematuro de rodamientos / bujes',
+
+                'OT-40129901', '', 'TALLER ELECTRICO SPCC', 'Ninguna', '', 0.0, 0.0, 0.0,
+
+                'Salió de la Pala 8 (PATQ8 / SHO008) y está por reparar en taller.', NULL
+
+            )
+
+            """,
+
+            (now_str,),
+
+        )
 
 
-
-    cur.executemany(
-
-        """
-
-        INSERT INTO historial_eventos (
-
-            codigo_equipo, numero_ciclo, fecha_hora, usuario_rol, tipo_operacion,
-
-            estado_asignado, equipo_principal, horas_componente_evento, horas_sumadas,
-
-            instalado_por, motivo_cambio, modo_falla, numero_ot, numero_oc,
-
-            proveedor_reparador, tipo_intervencion, detalle_kit, costo_kit_usd,
-
-            costo_reparacion_usd, costo_total_evento_usd, comentario_bitacora, foto_path
-
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-
-        """,
-
-        demo_events,
-
-    )
 
     conn.commit()
 
@@ -630,7 +886,7 @@ def seed_initial_demo_data() -> None:
 
 # ==============================================================================
 
-# 3. FUNCIONES OPERATIVAS (FOTOS FIFO, CARGA HORAS, SAP Y BACKUP)
+# 4. FUNCIONES OPERATIVAS: FOTOS FIFO (2 FOTOS), HORAS, SAP Y BACKUP
 
 # ==============================================================================
 
@@ -730,7 +986,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Fotografía guardada en Espacio #1."
+            msg_rotacion = "Fotografía guardada en Espacio #1 (1 de 2)."
 
         elif not f2_path:
 
@@ -742,7 +998,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Fotografía guardada en Espacio #2."
+            msg_rotacion = "Fotografía guardada en Espacio #2 (2 de 2)."
 
         else:
 
@@ -774,7 +1030,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Rotación FIFO completada: se eliminó la foto #1, la #2 pasó a #1 y la nueva quedó en #2."
+            msg_rotacion = "Ciclo de 2 fotos aplicado: se borró la más antigua (#1), la #2 pasó a #1 y la nueva quedó en #2."
 
 
 
@@ -792,7 +1048,7 @@ def save_component_photo_fifo(
 
                     horas_componente_evento, comentario_bitacora, foto_path
 
-                ) VALUES (?, ?, ?, ?, 'Inspección Fotográfica', ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'Actualización Fotográfica (FIFO)', ?, ?, ?, ?, ?)
 
                 """,
 
@@ -846,7 +1102,7 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
             continue
 
-        codigo_equipo = str(cod_raw).strip()
+        codigo_equipo = str(cod_raw).strip().upper()
 
         if codigo_equipo.endswith(".0"):
 
@@ -864,9 +1120,27 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
 
 
-        ubic_tec = str(row.get("Ubicac.técnica", "") or "").strip()
+        ubic_tec = str(row.get("Ubicac.técnica", "") or "").strip().upper()
 
-        flota, equipo_principal = parse_ubicacion_tecnica(ubic_tec)
+        flota_auto, modelo_auto, equipo_auto, estado_sap = parse_ubicacion_tecnica(ubic_tec)
+
+
+
+        flota_col = str(row.get("Flota", "") or "").strip().upper()
+
+        flota_final = flota_col if flota_col in FLOTAS_MACRO else flota_auto
+
+
+
+        mod_col = str(row.get("Modelo", "") or "").strip().upper()
+
+        modelo_final = normalize_model_name(mod_col) if (mod_col and mod_col != "NAN") else modelo_auto
+
+
+
+        est_col = str(row.get("Estado", "") or "").strip()
+
+        estado_final = est_col if est_col in ESTADOS_COMPONENTE else estado_sap
 
 
 
@@ -890,7 +1164,15 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
 
 
-        cur.execute("SELECT codigo_equipo FROM componentes WHERE codigo_equipo = ?", (codigo_equipo,))
+        comentario_sap = str(row.get("Comentario", "") or "").strip()
+
+        if comentario_sap == "nan":
+
+            comentario_sap = ""
+
+
+
+        cur.execute("SELECT codigo_equipo FROM componentes WHERE UPPER(codigo_equipo) = UPPER(?)", (codigo_equipo,))
 
         if not cur.fetchone():
 
@@ -900,7 +1182,7 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
                 INSERT INTO componentes (
 
-                    codigo_equipo, descripcion, flota, equipo_principal,
+                    codigo_equipo, descripcion, flota, modelo, equipo_principal,
 
                     ubicacion_tecnica, criticidad_abc, fabricante, serie,
 
@@ -910,11 +1192,29 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
                     gasto_ciclo_actual_usd, ultima_actualizacion_horas
 
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Montado', 1, 0.0, 0.0, 0.0, 0.0, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0.0, 0.0, 0.0, 0.0, ?)
 
                 """,
 
-                (codigo_equipo, descripcion, flota, equipo_principal, ubic_tec, criticidad_abc, fabricante, serie, now_str),
+                (codigo_equipo, descripcion, flota_final, modelo_final, equipo_auto, ubic_tec, criticidad_abc, fabricante, serie, estado_final, now_str),
+
+            )
+
+            cur.execute(
+
+                """
+
+                INSERT INTO historial_eventos (
+
+                    codigo_equipo, numero_ciclo, fecha_hora, usuario_rol,
+
+                    tipo_operacion, estado_asignado, equipo_principal, comentario_bitacora
+
+                ) VALUES (?, 1, ?, ?, 'Alta por Sincronización SAP', ?, ?, ?)
+
+                """,
+
+                (codigo_equipo, now_str, usuario_rol, estado_final, equipo_auto, comentario_sap or f"Importado de SAP en Flota {flota_final} · Modelo {modelo_final}"),
 
             )
 
@@ -928,19 +1228,39 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
                 UPDATE componentes
 
-                SET descripcion = ?, flota = ?, equipo_principal = ?,
+                SET descripcion = ?, flota = ?, modelo = ?, equipo_principal = ?,
 
                     ubicacion_tecnica = ?, criticidad_abc = ?,
 
-                    fabricante = ?, serie = ?
+                    fabricante = ?, serie = ?, estado_actual = ?
 
-                WHERE codigo_equipo = ?
+                WHERE UPPER(codigo_equipo) = UPPER(?)
 
                 """,
 
-                (descripcion, flota, equipo_principal, ubic_tec, criticidad_abc, fabricante, serie, codigo_equipo),
+                (descripcion, flota_final, modelo_final, equipo_auto, ubic_tec, criticidad_abc, fabricante, serie, estado_final, codigo_equipo),
 
             )
+
+            if comentario_sap:
+
+                cur.execute(
+
+                    """
+
+                    INSERT INTO historial_eventos (
+
+                        codigo_equipo, numero_ciclo, fecha_hora, usuario_rol,
+
+                        tipo_operacion, estado_asignado, equipo_principal, comentario_bitacora
+
+                    ) VALUES (?, 1, ?, ?, 'Actualización SAP', ?, ?, ?)
+
+                    """,
+
+                    (codigo_equipo, now_str, usuario_rol, estado_final, equipo_auto, comentario_sap),
+
+                )
 
             actualizados += 1
 
@@ -1008,9 +1328,21 @@ def apply_hours_to_mounted_components(
 
             cur.execute(
 
-                "SELECT codigo_equipo, descripcion, flota, equipo_principal, ciclo_actual, horas_ciclo_actual, horas_acumuladas_totales FROM componentes WHERE UPPER(equipo_principal) = UPPER(?) AND estado_actual = 'Montado'",
+                """
 
-                (t_val,),
+                SELECT codigo_equipo, descripcion, flota, modelo, equipo_principal,
+
+                       ciclo_actual, horas_ciclo_actual, horas_acumuladas_totales
+
+                FROM componentes
+
+                WHERE (UPPER(equipo_principal) = UPPER(?) OR UPPER(equipo_principal) LIKE UPPER(?))
+
+                  AND estado_actual = 'Montado'
+
+                """,
+
+                (t_val, f"%{t_val}%"),
 
             )
 
@@ -1018,7 +1350,17 @@ def apply_hours_to_mounted_components(
 
             cur.execute(
 
-                "SELECT codigo_equipo, descripcion, flota, equipo_principal, ciclo_actual, horas_ciclo_actual, horas_acumuladas_totales FROM componentes WHERE UPPER(codigo_equipo) = UPPER(?) AND estado_actual = 'Montado'",
+                """
+
+                SELECT codigo_equipo, descripcion, flota, modelo, equipo_principal,
+
+                       ciclo_actual, horas_ciclo_actual, horas_acumuladas_totales
+
+                FROM componentes
+
+                WHERE UPPER(codigo_equipo) = UPPER(?) AND estado_actual = 'Montado'
+
+                """,
 
                 (t_val,),
 
@@ -1072,11 +1414,11 @@ def apply_hours_to_mounted_components(
 
                     horas_componente_evento, horas_sumadas, comentario_bitacora
 
-                ) VALUES (?, ?, ?, ?, 'Carga de Horas (Montado)', 'Montado', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'Corrida de Horas (Montado)', 'Montado', ?, ?, ?, ?)
 
                 """,
 
-                (cod, r["ciclo_actual"], now_str, usuario_rol, r["equipo_principal"], round(nuevo_ciclo, 2), round(delta, 2), f"Carga ({metodo_carga}): +{delta:,.1f} hrs"),
+                (cod, r["ciclo_actual"], now_str, usuario_rol, r["equipo_principal"], round(nuevo_ciclo, 2), round(delta, 2), f"Corrida de horas ({metodo_carga}): +{delta:,.1f} hrs (Horómetro ciclo: {nuevo_ciclo:,.1f} hrs)"),
 
             )
 
@@ -1086,11 +1428,15 @@ def apply_hours_to_mounted_components(
 
                     "Flota": r["flota"],
 
-                    "Código": cod,
+                    "Modelo": r["modelo"],
+
+                    "Código SAP": cod,
 
                     "Descripción": r["descripcion"],
 
                     "Equipo": r["equipo_principal"],
+
+                    "Ciclo #": r["ciclo_actual"],
 
                     "Horas Sumadas (+)": round(delta, 1),
 
@@ -1110,7 +1456,7 @@ def apply_hours_to_mounted_components(
 
             "INSERT INTO log_carga_horas (fecha_hora, usuario, metodo_carga, componentes_afectados, detalle) VALUES (?, ?, ?, ?, ?)",
 
-            (now_str, usuario_rol, metodo_carga, len(afectados_detalle), f"Actualizados {len(afectados_detalle)} componentes montados."),
+            (now_str, usuario_rol, metodo_carga, len(afectados_detalle), f"Corrida aplicada a {len(afectados_detalle)} componentes montados."),
 
         )
 
@@ -1126,11 +1472,121 @@ def apply_hours_to_mounted_components(
 
 
 
+def build_cycle_summary_dataframe(df_eventos_all: pd.DataFrame, comp: pd.Series) -> pd.DataFrame:
+
+    """
+
+    Construye el Resumen de Acción y Corridas por Ciclo (1 fila por cada Vida/Ciclo del componente)
+
+    mostrando Fecha Inicio, Último Movimiento, Equipos donde operó, Horas corridas, Kits/OC y Costo Total del Ciclo.
+
+    """
+
+    total_ciclos = max(1, int(comp["ciclo_actual"] or 1))
+
+    rows = []
+
+    for c_num in range(1, total_ciclos + 1):
+
+        sub = df_eventos_all[df_eventos_all["numero_ciclo"] == c_num] if not df_eventos_all.empty else pd.DataFrame()
+
+        if not sub.empty:
+
+            fecha_ini = sub["fecha_hora"].min()
+
+            fecha_fin = sub["fecha_hora"].max()
+
+            equipos = ", ".join(sorted(set(str(x) for x in sub["equipo_principal"].dropna() if str(x).strip())))
+
+            hrs_max_ev = float(sub["horas_componente_evento"].max() or 0.0)
+
+            hrs_sumadas = float(sub["horas_sumadas"].sum() or 0.0)
+
+            corridas_count = int((sub["horas_sumadas"] > 0).sum())
+
+            acciones_count = len(sub)
+
+            costo_ciclo = float(sub["costo_total_evento_usd"].sum() or 0.0)
+
+            ots = ", ".join(sorted(set(str(x) for x in sub["numero_ot"].dropna() if str(x).strip())))
+
+            ocs = ", ".join(sorted(set(str(x) for x in sub["numero_oc"].dropna() if str(x).strip())))
+
+            ult_com = str(sub.iloc[0]["comentario_bitacora"] or "")
+
+        else:
+
+            fecha_ini = comp["ultima_actualizacion_horas"] or "S/F"
+
+            fecha_fin = comp["ultima_actualizacion_horas"] or "S/F"
+
+            equipos = str(comp["equipo_principal"])
+
+            hrs_max_ev = float(comp["horas_ciclo_actual"] or 0.0) if c_num == total_ciclos else 0.0
+
+            hrs_sumadas = 0.0
+
+            corridas_count = 0
+
+            acciones_count = 0
+
+            costo_ciclo = float(comp["gasto_ciclo_actual_usd"] or 0.0) if c_num == total_ciclos else 0.0
+
+            ots, ocs, ult_com = "", "", "Ciclo activo"
+
+
+
+        if c_num == total_ciclos:
+
+            hrs_mostrar = max(hrs_max_ev, float(comp["horas_ciclo_actual"] or 0.0))
+
+        else:
+
+            hrs_mostrar = hrs_max_ev
+
+
+
+        rows.append(
+
+            {
+
+                "Vida / Ciclo": format_vidas_label(c_num) if c_num == 1 else f"Ciclo #{c_num}",
+
+                "Inicio Ciclo": fecha_ini,
+
+                "Última Acción": fecha_fin,
+
+                "Equipo(s)": equipos or str(comp["equipo_principal"]),
+
+                "Horas Corridas en Ciclo": round(hrs_mostrar, 1),
+
+                "Hrs Sumadas por Corridas": round(hrs_sumadas, 1),
+
+                "N° Corridas Hrs": corridas_count,
+
+                "N° Acciones Log": acciones_count,
+
+                "OT / OC": f"{ots} {ocs}".strip() or "S/N",
+
+                "Costo del Ciclo ($ USD)": round(costo_ciclo, 2),
+
+                "Último Comentario": ult_com,
+
+            }
+
+        )
+
+    return pd.DataFrame(rows)
+
+
+
+
+
 def export_full_database_to_excel() -> bytes:
 
     conn = get_connection()
 
-    df_comp = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, equipo_principal, codigo_equipo", conn)
+    df_comp = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, modelo, equipo_principal, codigo_equipo", conn)
 
     df_hist = pd.read_sql_query("SELECT * FROM historial_eventos ORDER BY id_evento DESC", conn)
 
@@ -1146,9 +1602,9 @@ def export_full_database_to_excel() -> bytes:
 
         df_comp.to_excel(writer, sheet_name="Inventario_Actual", index=False)
 
-        df_hist.to_excel(writer, sheet_name="Historial_Eventos_Costos", index=False)
+        df_hist.to_excel(writer, sheet_name="Log_Acciones_Por_Ciclo", index=False)
 
-        df_logs.to_excel(writer, sheet_name="Bitacora_Carga_Horas", index=False)
+        df_logs.to_excel(writer, sheet_name="Historial_Corridas_Horas", index=False)
 
         for sheet_name in writer.sheets:
 
@@ -1176,45 +1632,73 @@ def generate_sap_template_excel() -> bytes:
 
             {
 
+                "Equipo": "BRASWIT231",
+
+                "Denominación": "INTERRUPTOR / BRAKE SWITCH DE IZAJE",
+
+                "Indicador ABC": "A",
+
+                "Ubicac.técnica": "SPCC-TOQ-MIN-495HR-SHO008-TALLER",
+
+                "Denominación3": "PALA 8 (SHO008 / PATQ8)",
+
+                "Fabricante": "KOMATSU / P&H",
+
+                "Fabr. Nº-serie": "SN-BRK-231",
+
+                "Válido de": "2024-01-01",
+
+                "Fin de validez": "9999-12-31",
+
+                "Comentario": "Salió de la Pala 8 y está por reparar",
+
+            },
+
+            {
+
                 "Equipo": "10045901",
 
                 "Denominación": "MOTOR ELECTRICO IZAJE PRINCIPAL IZQ",
 
                 "Indicador ABC": "A",
 
-                "Ubicac.técnica": "SPCC-TOQ-MIN-495H-SHO009-IZAJ",
+                "Ubicac.técnica": "SPCC-TOQ-MIN-4100A-SHO004-IZAJ",
 
-                "Denominación3": "PALA ELECTRICA P&H 495HR #9",
+                "Denominación3": "PALA 4 (SHO004 / PATQ4)",
 
                 "Fabricante": "KOMATSU / P&H",
 
-                "Fabr. Nº-serie": "SN-495H-IZ01",
+                "Fabr. Nº-serie": "SN-4100A-IZ01",
 
                 "Válido de": "2024-01-01",
 
                 "Fin de validez": "9999-12-31",
+
+                "Comentario": "Operativo en Pala 4 modelo 4100A",
 
             },
 
             {
 
-                "Equipo": "10045902",
+                "Equipo": "PERCAB402",
 
-                "Denominación": "CONVERTIDOR DE TORQUE PRINCIPAL",
+                "Denominación": "CABEZAL DE ROTACION PRINCIPAL",
 
                 "Indicador ABC": "A",
 
-                "Ubicac.técnica": "SPCC-TOQ-MIN-994F-FLO005-TRAN",
+                "Ubicac.técnica": "SPCC-TOQ-MIN-PV271-PER004-ROTA",
 
-                "Denominación3": "CARGADOR FRONTAL CAT 994F #5",
+                "Denominación3": "PERFORADORA PV271 #4",
 
-                "Fabricante": "CATERPILLAR",
+                "Fabricante": "EPIROC",
 
-                "Fabr. Nº-serie": "CAT-CONV-551",
+                "Fabr. Nº-serie": "EP-PV271-901",
 
                 "Válido de": "2024-01-01",
 
                 "Fin de validez": "9999-12-31",
+
+                "Comentario": "Montado en PER004",
 
             },
 
@@ -1244,7 +1728,11 @@ def generate_hours_template_excel() -> bytes:
 
             {"Equipo_Principal": "SHO009", "Horas_a_Sumar": 145.0},
 
-            {"Equipo_Principal": "SHO008", "Horas_a_Sumar": 132.5},
+            {"Equipo_Principal": "SHO004", "Horas_a_Sumar": 132.5},
+
+            {"Equipo_Principal": "PER004", "Horas_a_Sumar": 110.0},
+
+            {"Equipo_Principal": "VOL002", "Horas_a_Sumar": 160.0},
 
             {"Equipo_Principal": "FLO005", "Horas_a_Sumar": 118.0},
 
@@ -1268,7 +1756,7 @@ def generate_hours_template_excel() -> bytes:
 
 # ==============================================================================
 
-# 4. CABECERA NATIVA Y FILTRO GLOBAL POR FLOTA
+# 5. CABECERA CON LAS 4 FLOTAS DEFINIDAS (PALAS, PERFOS, VOLQUETES, AUXILIARES)
 
 # ==============================================================================
 
@@ -1277,6 +1765,8 @@ def init_session_state() -> None:
     defaults = {
 
         "user_role": "Planner",
+
+        "planner_nombre": "",
 
         "active_flota": "Todas",
 
@@ -1302,27 +1792,39 @@ def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
     with st.container(border=True):
 
-        c_title, c_flota, c_rol = st.columns([2.2, 1.5, 1.0])
+        c_title, c_flota, c_rol, c_planner = st.columns([2.0, 1.4, 1.0, 1.2])
 
         with c_title:
 
             st.markdown("### ⚙️ P.I.M. — CONTROL DE INVENTARIOS")
 
-            st.caption("PLANEAMIENTO MANTENIMIENTO MINA · Gestión por Flota y Trazabilidad SAP PM")
+            st.caption("PLANEAMIENTO MANTENIMIENTO MINA · PALAS · PERFOS · VOLQUETES · AUXILIARES")
 
-        flotas = ["Todas"] + sorted(df_all["flota"].dropna().unique().tolist())
+        opciones_flota = ["Todas"] + FLOTAS_MACRO
 
-        if st.session_state.active_flota not in flotas:
+        if st.session_state.active_flota not in opciones_flota:
 
             st.session_state.active_flota = "Todas"
 
         with c_flota:
 
-            st.selectbox("🚜 Flota de trabajo (Espacio del Planner):", options=flotas, key="active_flota")
+            st.selectbox(
+
+                "🚜 Flota de trabajo (4 Flotas):",
+
+                options=opciones_flota,
+
+                key="active_flota",
+
+            )
 
         with c_rol:
 
             st.selectbox("👤 Perfil:", options=ROLES_SISTEMA, key="user_role")
+
+        with c_planner:
+
+            st.text_input("✍️ Planner:", placeholder="Ej. F. Mendoza", key="planner_nombre")
 
 
 
@@ -1334,15 +1836,15 @@ def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
 # ==============================================================================
 
-# 5. SECCIÓN 1: VISUALIZAR (TARJETAS NATIVAS + HOJA DE VIDA + FOTOS)
+# 6. PESTAÑA 1: VISUALIZAR, REEMPLAZOS POR MODELO Y LOG DE ACCIÓN POR CICLO
 
 # ==============================================================================
 
-def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
+def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     if df_flota.empty:
 
-        st.info("No hay componentes en esta flota.")
+        st.info(f"No hay componentes registrados en la flota **{st.session_state.active_flota}**. Regístralos en la pestaña **➕ 3. Ingresar / Subir SAP**.")
 
         return
 
@@ -1352,13 +1854,9 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
     montados = int((df_flota["estado_actual"] == "Montado").sum())
 
+    reemplazos = int(df_flota["estado_actual"].isin(["Reparado", "Nuevo"]).sum())
+
     taller = int(df_flota["estado_actual"].isin(["Por Reparar", "Desmontado", "Salida por Reclamo"]).sum())
-
-    gasto = float(df_flota["gasto_acumulado_total_usd"].sum())
-
-    hrs = float(df_flota["horas_acumuladas_totales"].sum())
-
-    c_hr = (gasto / hrs) if hrs > 0 else 0.0
 
 
 
@@ -1368,51 +1866,69 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            st.metric("Componentes", f"{total}", f"Flota: {st.session_state.active_flota}")
+            st.metric("Total Componentes", f"{total}", f"Flota: {st.session_state.active_flota}")
 
     with k2:
 
         with st.container(border=True):
 
-            st.metric("Montados", f"{montados}", "En operación")
+            st.metric("Montados en Equipo", f"{montados}", "Operando")
 
     with k3:
 
         with st.container(border=True):
 
-            st.metric("Por Reparar / Taller", f"{taller}", "Pendientes")
+            st.metric("Listos para Reemplazo", f"{reemplazos}", "Reparado / Nuevo")
 
     with k4:
 
         with st.container(border=True):
 
-            st.metric("Gasto Acumulado", f"${gasto:,.0f}", f"${c_hr:,.2f} USD/hr")
+            st.metric("Por Reparar / Taller", f"{taller}", "En atención")
 
 
 
-    f1, f2, f3 = st.columns([1.2, 1.2, 2.0])
+    f1, f2, f3, f4 = st.columns([1.1, 1.2, 1.1, 1.8])
 
     with f1:
 
-        sel_eq = st.selectbox("Equipo Principal:", ["Todos"] + sorted(df_flota["equipo_principal"].dropna().unique().tolist()), key="vis_eq")
+        modelos_disp = ["Todos"] + sorted(df_flota["modelo"].dropna().unique().tolist())
+
+        sel_mod = st.selectbox("⚙️ Modelo (ej. 4100A, 495HR):", modelos_disp, key="vis_mod")
 
     with f2:
 
-        sel_est = st.selectbox("Estado:", ["Todos"] + ESTADOS_COMPONENTE, key="vis_est")
+        df_sub_eq = df_flota if sel_mod == "Todos" else df_flota[df_flota["modelo"] == sel_mod]
+
+        equipos_disp = ["Todos"] + sorted(df_sub_eq["equipo_principal"].dropna().unique().tolist())
+
+        sel_eq = st.selectbox("🚜 Equipo (Pala/Perfo/Volq):", equipos_disp, key="vis_eq")
 
     with f3:
 
-        q = st.text_input("Buscar componente:", placeholder="Código SAP, descripción o serie...", key="vis_q")
+        sel_est = st.selectbox("📌 Estado:", ["Todos", "Solo Reemplazos (Reparado/Nuevo)"] + ESTADOS_COMPONENTE, key="vis_est")
+
+    with f4:
+
+        q = st.text_input("🔍 Buscar Código SAP (ej. BRASWIT231), descripción o serie:", key="vis_q")
 
 
 
     df_filt = df_flota.copy()
 
+    if sel_mod != "Todos":
+
+        df_filt = df_filt[df_filt["modelo"] == sel_mod]
+
     if sel_eq != "Todos":
 
         df_filt = df_filt[df_filt["equipo_principal"] == sel_eq]
 
-    if sel_est != "Todos":
+    if sel_est == "Solo Reemplazos (Reparado/Nuevo)":
+
+        df_filt = df_filt[df_filt["estado_actual"].isin(["Reparado", "Nuevo"])]
+
+    elif sel_est != "Todos":
 
         df_filt = df_filt[df_filt["estado_actual"] == sel_est]
 
@@ -1426,7 +1942,11 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
             | df_filt["descripcion"].astype(str).str.lower().str.contains(ql, na=False)
 
-            | df_filt["serie"].astype(str).str.lower().str.contains(ql, na=False)
+            | df_filt["modelo"].astype(str).str.lower().str.contains(ql, na=False)
+
+            | df_filt["equipo_principal"].astype(str).str.lower().str.contains(ql, na=False)
+
+            | df_filt["ubicacion_tecnica"].astype(str).str.lower().str.contains(ql, na=False)
 
         ]
 
@@ -1439,6 +1959,8 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
         return
 
 
+
+    conn = get_connection()
 
     rows_list = [r for _, r in df_filt.head(15).iterrows()]
 
@@ -1454,19 +1976,41 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
                 cod_item = str(r["codigo_equipo"])
 
-                c_hr_item = (r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"]) if r["horas_acumuladas_totales"] > 0 else 0.0
+                cur_ev = conn.cursor()
+
+                cur_ev.execute(
+
+                    "SELECT comentario_bitacora FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC LIMIT 1",
+
+                    (cod_item,),
+
+                )
+
+                ult_ev = cur_ev.fetchone()
+
+                ult_com = ult_ev["comentario_bitacora"] if ult_ev and ult_ev["comentario_bitacora"] else "Sin comentarios registrados"
+
+
 
                 with cols[c_i]:
 
                     with st.container(border=True):
 
-                        st.markdown(get_native_badges_markdown(r["flota"], r["estado_actual"], r["ciclo_actual"]))
+                        st.markdown(get_native_badges_markdown(r["flota"], r["modelo"], r["estado_actual"], r["ciclo_actual"]))
 
                         st.markdown(f"**{r['descripcion']}**")
 
-                        st.caption(f"SAP: `{cod_item}` · Equipo: **{r['equipo_principal']}** · ⏱️ {float(r['horas_ciclo_actual']):,.0f} hrs · 💵 ${c_hr_item:,.2f}/hr")
+                        st.caption(
 
-                        if st.button("🔍 Ver Hoja de Vida", key=f"sel_card_{cod_item}", use_container_width=True):
+                            f"**SAP:** `{cod_item}` · **Equipo:** `{r['equipo_principal']}`\n\n"
+
+                            f"📍 **Ubic. SAP:** `{r['ubicacion_tecnica']}` · ⏱️ **{float(r['horas_ciclo_actual']):,.0f} hrs**\n\n"
+
+                            f"💬 *{ult_com[:85]}*"
+
+                        )
+
+                        if st.button("🔍 Ver Hoja de Vida y Log por Ciclo", key=f"sel_card_{cod_item}", use_container_width=True):
 
                             st.session_state.selected_component = cod_item
 
@@ -1476,13 +2020,19 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
     st.divider()
 
-    opciones = [f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} - {r['equipo_principal']})" for _, r in df_filt.iterrows()]
+    opciones = [
+
+        f"{r['codigo_equipo']} | {r['descripcion']} | Flota: {r['flota']} · Mod. {r['modelo']} · {r['equipo_principal']} [{r['estado_actual']}]"
+
+        for _, r in df_filt.iterrows()
+
+    ]
 
     cod_list = df_filt["codigo_equipo"].tolist()
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("📋 Hoja de Vida del Componente Seleccionado:", opciones, index=idx_def, key="vis_sel_comp")
+    sel_comp = st.selectbox("📋 Seleccionar Componente para ver Hoja de Vida, Reemplazos y Log por Ciclo:", opciones, index=idx_def, key="vis_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -1510,17 +2060,33 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
         with c_info:
 
-            st.markdown(get_native_badges_markdown(comp["flota"], comp["estado_actual"], total_vidas))
+            st.markdown(get_native_badges_markdown(comp["flota"], comp["modelo"], comp["estado_actual"], total_vidas))
 
-            st.subheader(comp["descripcion"])
+            st.subheader(f"{comp['codigo_equipo']} — {comp['descripcion']}")
 
-            st.write(f"**Código SAP:** `{comp['codigo_equipo']}` · **Equipo:** `{comp['equipo_principal']}` · **Fabricante:** {comp['fabricante']} · **Serie:** {comp['serie']} · **ABC:** {comp['criticidad_abc']}")
+            st.write(
 
-            st.write(f"⏱️ **Hrs Ciclo:** {float(comp['horas_ciclo_actual']):,.1f} hrs | ⏳ **Hrs Totales:** {float(comp['horas_acumuladas_totales']):,.1f} hrs | 💵 **Costo Ciclo:** ${float(comp['gasto_ciclo_actual_usd']):,.2f} | 🏦 **Costo Total:** ${float(comp['gasto_acumulado_total_usd']):,.2f}")
+                f"**Flota:** `{comp['flota']}` · **Modelo Compatible:** `{comp['modelo']}` · **Equipo:** `{comp['equipo_principal']}`\n\n"
+
+                f"📍 **Ubicación Técnica SAP:** `{comp['ubicacion_tecnica']}` · **Fabricante:** {comp['fabricante']} · **Serie:** {comp['serie']} · **ABC:** {comp['criticidad_abc']}"
+
+            )
+
+            st.write(
+
+                f"⏱️ **Hrs Ciclo Actual:** {float(comp['horas_ciclo_actual']):,.1f} hrs | "
+
+                f"⏳ **Hrs Totales:** {float(comp['horas_acumuladas_totales']):,.1f} hrs | "
+
+                f"💵 **Costo Ciclo:** ${float(comp['gasto_ciclo_actual_usd']):,.2f} | "
+
+                f"🏦 **Costo Acumulado:** ${float(comp['gasto_acumulado_total_usd']):,.2f}"
+
+            )
 
         with c_vidas:
 
-            st.metric("Vidas Registradas", nav_state["label"])
+            st.metric("Vidas / Ciclos", nav_state["label"])
 
             if nav_state["show_nav"]:
 
@@ -1544,19 +2110,53 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
 
 
+    # Reemplazos compatibles del mismo Modelo y Flota
+
+    df_reemplazos = df_all[
+
+        (df_all["flota"] == comp["flota"])
+
+        & (df_all["modelo"] == comp["modelo"])
+
+        & (df_all["codigo_equipo"] != cod_sel)
+
+    ]
+
+    with st.expander(f"🔄 Reemplazos Compatibles del Modelo {comp['modelo']} en Flota {comp['flota']} ({len(df_reemplazos)} encontrados)", expanded=True):
+
+        if df_reemplazos.empty:
+
+            st.caption(f"No hay otros componentes registrados con el modelo `{comp['modelo']}` en la flota `{comp['flota']}`.")
+
+        else:
+
+            st.dataframe(
+
+                df_reemplazos[["codigo_equipo", "descripcion", "modelo", "estado_actual", "equipo_principal", "ubicacion_tecnica", "horas_ciclo_actual", "ciclo_actual"]],
+
+                use_container_width=True,
+
+                hide_index=True,
+
+            )
+
+
+
+    # 2 Últimas Fotografías (Ciclo FIFO)
+
     p1, p2 = st.columns(2)
 
     with p1:
 
         with st.container(border=True):
 
-            st.markdown("**📷 Fotografía #1 (Previa)**")
+            st.markdown("**📷 Fotografía #1 (Previa en el ciclo de 2 fotos)**")
 
             if comp["foto_1_path"] and os.path.exists(comp["foto_1_path"]):
 
                 st.image(comp["foto_1_path"], use_container_width=True)
 
-                st.caption(f"{comp['foto_1_fecha'] or ''} — {comp['foto_1_comentario'] or ''}")
+                st.caption(f"📅 {comp['foto_1_fecha'] or ''} — 💬 {comp['foto_1_comentario'] or ''}")
 
             else:
 
@@ -1572,7 +2172,7 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
                 st.image(comp["foto_2_path"], use_container_width=True)
 
-                st.caption(f"{comp['foto_2_fecha'] or ''} — {comp['foto_2_comentario'] or ''}")
+                st.caption(f"📅 {comp['foto_2_fecha'] or ''} — 💬 {comp['foto_2_comentario'] or ''}")
 
             else:
 
@@ -1580,25 +2180,71 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
 
 
-    conn = get_connection()
+    # LOG DE ACCIÓN POR CICLO E HISTORIAL DE CORRIDAS POR TIEMPO
 
-    df_eventos = pd.read_sql_query("SELECT * FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC", conn, params=(cod_sel,))
+    df_eventos_all = pd.read_sql_query("SELECT * FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC", conn, params=(cod_sel,))
 
     conn.close()
 
-    if nav_state["show_nav"] and not df_eventos.empty:
-
-        df_eventos = df_eventos[df_eventos["numero_ciclo"] == nav_state["current"]]
 
 
+    st.markdown("#### 📊 Resumen Consolidado por Ciclo / Vida (Historial de Desempeño y Costo por Ciclo)")
 
-    if not df_eventos.empty:
+    df_resumen_ciclos = build_cycle_summary_dataframe(df_eventos_all, comp)
 
-        st.markdown("**📓 Historial de Eventos, OC/OT y Bitácora**")
+    st.dataframe(df_resumen_ciclos, use_container_width=True, hide_index=True)
+
+
+
+    st.markdown("#### ⏱️ Log Detallado de Acciones, Comentarios y Corridas por Tiempo")
+
+    filtro_log = st.radio(
+
+        "Filtrar bitácora del componente:",
+
+        options=["Todas las vidas", f"Solo vida seleccionada (#{nav_state['current']})"] if nav_state["show_nav"] else ["Todas las vidas"],
+
+        horizontal=True,
+
+    )
+
+    df_ev_mostrar = df_eventos_all[df_eventos_all["numero_ciclo"] == nav_state["current"]] if filtro_log.startswith("Solo") else df_eventos_all
+
+    if not df_ev_mostrar.empty:
 
         st.dataframe(
 
-            df_eventos[["fecha_hora", "numero_ciclo", "tipo_operacion", "estado_asignado", "numero_ot", "numero_oc", "costo_total_evento_usd", "comentario_bitacora"]],
+            df_ev_mostrar[
+
+                [
+
+                    "fecha_hora",
+
+                    "numero_ciclo",
+
+                    "usuario_rol",
+
+                    "tipo_operacion",
+
+                    "estado_asignado",
+
+                    "equipo_principal",
+
+                    "horas_componente_evento",
+
+                    "horas_sumadas",
+
+                    "comentario_bitacora",
+
+                    "numero_ot",
+
+                    "numero_oc",
+
+                    "costo_total_evento_usd",
+
+                ]
+
+            ],
 
             use_container_width=True,
 
@@ -1606,13 +2252,17 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
         )
 
+    else:
+
+        st.caption("Sin eventos registrados.")
+
 
 
 
 
 # ==============================================================================
 
-# 6. SECCIÓN 2: ACTUALIZAR COMPONENTE (FOTOS FIFO + ESTADO/OC + CARGA HORAS)
+# 7. PESTAÑA 2: EDITAR / ACTUALIZAR COMPONENTE (FOTO FIFO + COMENTARIOS + HORAS)
 
 # ==============================================================================
 
@@ -1626,13 +2276,19 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-    opciones = [f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} - {r['equipo_principal']}) [{r['estado_actual']}]" for _, r in df_flota.iterrows()]
+    opciones = [
+
+        f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} · Mod. {r['modelo']} · {r['equipo_principal']}) [{r['estado_actual']}]"
+
+        for _, r in df_flota.iterrows()
+
+    ]
 
     cod_list = df_flota["codigo_equipo"].tolist()
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("Seleccionar Componente a Actualizar:", opciones, index=idx_def, key="upd_sel_comp")
+    sel_comp = st.selectbox("Seleccionar Componente a Editar / Actualizar:", opciones, index=idx_def, key="upd_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -1642,11 +2298,23 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
+    autor_str = f"{st.session_state.user_role}" + (f" - {st.session_state.planner_nombre.strip()}" if st.session_state.planner_nombre.strip() else f" ({comp_row['flota']})")
+
+
+
     with st.container(border=True):
 
-        st.markdown(get_native_badges_markdown(comp_row["flota"], comp_row["estado_actual"], comp_row["ciclo_actual"]))
+        st.markdown(get_native_badges_markdown(comp_row["flota"], comp_row["modelo"], comp_row["estado_actual"], comp_row["ciclo_actual"]))
 
-        st.write(f"**{comp_row['codigo_equipo']} — {comp_row['descripcion']}** · Equipo: `{comp_row['equipo_principal']}` · Hrs Ciclo: `{float(comp_row['horas_ciclo_actual']):,.1f}`")
+        st.write(
+
+            f"**Código SAP:** `{comp_row['codigo_equipo']}` — **{comp_row['descripcion']}** · "
+
+            f"Equipo: `{comp_row['equipo_principal']}` · Ubicación SAP: `{comp_row['ubicacion_tecnica']}` · "
+
+            f"Hrs Ciclo: `{float(comp_row['horas_ciclo_actual']):,.1f}`"
+
+        )
 
 
 
@@ -1654,101 +2322,199 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     if role == "Campo-Tablet":
 
-        sub_foto, = st.tabs(["📸 Subir Foto y Comentario"])
+        sub_bitacora, = st.tabs(["📸 Foto (Ciclo 2 Fotos) y Comentario Manual"])
 
         sub_estado, sub_horas = None, None
 
     else:
 
-        sub_foto, sub_estado, sub_horas = st.tabs(["📸 Foto y Comentario", "🔄 Estado, OT/OC y Costos", "⏱️ Cargar Horas (Todas las Flotas)"])
+        sub_bitacora, sub_estado, sub_horas = st.tabs(
+
+            [
+
+                "📸 1. Foto (Ciclo 2 Fotos) y Comentario Manual",
+
+                "🔄 2. Editar Ubicación SAP, Estado y Costos",
+
+                "⏱️ 3. Corrida Masiva de Horas (Todas las Flotas)",
+
+            ]
+
+        )
 
 
 
-    with sub_foto:
+    with sub_bitacora:
 
         c_f1, c_f2 = st.columns(2)
 
         with c_f1:
 
-            if comp_row["foto_1_path"] and os.path.exists(comp_row["foto_1_path"]):
+            with st.container(border=True):
 
-                st.image(comp_row["foto_1_path"], caption=f"Foto #1: {comp_row['foto_1_comentario'] or ''}", use_container_width=True)
+                st.markdown("**📷 Foto #1 Guardada (Se borra al tomar la 3ra)**")
 
-            else:
+                if comp_row["foto_1_path"] and os.path.exists(comp_row["foto_1_path"]):
 
-                st.caption("Espacio Foto #1 libre")
+                    st.image(comp_row["foto_1_path"], caption=f"{comp_row['foto_1_fecha'] or ''} — {comp_row['foto_1_comentario'] or ''}", use_container_width=True)
+
+                else:
+
+                    st.caption("Espacio #1 libre")
 
         with c_f2:
 
-            if comp_row["foto_2_path"] and os.path.exists(comp_row["foto_2_path"]):
+            with st.container(border=True):
 
-                st.image(comp_row["foto_2_path"], caption=f"Foto #2 (Reciente): {comp_row['foto_2_comentario'] or ''}", use_container_width=True)
+                st.markdown("**📷 Foto #2 Guardada (Más Reciente)**")
 
-            else:
+                if comp_row["foto_2_path"] and os.path.exists(comp_row["foto_2_path"]):
 
-                st.caption("Espacio Foto #2 libre")
-
-
-
-        origen = st.radio("Capturar desde:", ["📁 Archivo / Galería", "📸 Cámara"], horizontal=True)
-
-        img_file = st.file_uploader("Seleccionar imagen:", type=["jpg", "jpeg", "png", "webp"], key="up_img") if origen.startswith("📁") else st.camera_input("Tomar foto:")
-
-        com_txt = st.text_area("Comentario u observación:", height=80, key="up_com")
-
-
-
-        b1, b2 = st.columns(2)
-
-        with b1:
-
-            if st.button("💾 Guardar Foto (FIFO) y Comentario", type="primary", use_container_width=True):
-
-                if img_file is None:
-
-                    st.error("Selecciona o toma una fotografía primero.")
+                    st.image(comp_row["foto_2_path"], caption=f"{comp_row['foto_2_fecha'] or ''} — {comp_row['foto_2_comentario'] or ''}", use_container_width=True)
 
                 else:
 
-                    ok, msg, _ = save_component_photo_fifo(cod_sel, img_file, com_txt, role, True)
+                    st.caption("Espacio #2 libre")
 
-                    if ok:
 
-                        st.success(msg)
 
-                        st.rerun()
+        with st.container(border=True):
+
+            st.markdown("**✍️ Registro Manual del Planner / Campo (Comentario + Estado + Foto FIFO)**")
+
+            origen = st.radio("Origen de la foto:", ["📸 Tomar Foto con Cámara", "📁 Subir Imagen desde Galería/PC"], horizontal=True)
+
+            img_file = st.camera_input("Capturar fotografía:") if origen.startswith("📸") else st.file_uploader("Seleccionar imagen:", type=["jpg", "jpeg", "png", "webp"], key="up_img")
+
+
+
+            c_est_rap, c_eq_rap = st.columns(2)
+
+            with c_est_rap:
+
+                est_rapido = st.selectbox(
+
+                    "Estado actual del componente:",
+
+                    options=ESTADOS_COMPONENTE,
+
+                    index=ESTADOS_COMPONENTE.index(comp_row["estado_actual"]) if comp_row["estado_actual"] in ESTADOS_COMPONENTE else 0,
+
+                    key="est_rap_sel",
+
+                )
+
+            with c_eq_rap:
+
+                eq_rapido = st.text_input("Equipo asociado (ej. PALA8 / SHO008 / PATQ8):", value=str(comp_row["equipo_principal"]), key="eq_rap_txt")
+
+
+
+            com_txt = st.text_area(
+
+                "Comentario manual (ej. BRASWIT231 salió de la Pala 8 y está por reparar):",
+
+                placeholder="Escribe aquí de qué equipo salió, en qué condición está o qué requiere...",
+
+                height=90,
+
+                key="up_com",
+
+            )
+
+
+
+            b1, b2 = st.columns(2)
+
+            with b1:
+
+                if st.button("💾 Guardar Foto (Ciclo 2 Fotos) + Comentario", type="primary", use_container_width=True):
+
+                    if img_file is None:
+
+                        st.error("Toma o selecciona una foto primero (o usa el botón de la derecha para guardar solo el comentario).")
 
                     else:
 
-                        st.error(msg)
+                        conn = get_connection()
 
-        with b2:
+                        cur = conn.cursor()
 
-            if st.button("📝 Guardar Solo Comentario", use_container_width=True):
+                        cur.execute(
 
-                if not com_txt.strip():
+                            "UPDATE componentes SET estado_actual = ?, equipo_principal = ? WHERE codigo_equipo = ?",
 
-                    st.warning("Escribe un comentario primero.")
+                            (est_rapido, eq_rapido.strip(), cod_sel),
 
-                else:
+                        )
 
-                    conn = get_connection()
+                        conn.commit()
 
-                    cur = conn.cursor()
+                        conn.close()
 
-                    cur.execute(
+                        ok, msg, _ = save_component_photo_fifo(cod_sel, img_file, com_txt, autor_str, True)
 
-                        "INSERT INTO historial_eventos (codigo_equipo, numero_ciclo, fecha_hora, usuario_rol, tipo_operacion, estado_asignado, equipo_principal, horas_componente_evento, comentario_bitacora) VALUES (?, ?, ?, ?, 'Nota / Comentario', ?, ?, ?, ?)",
+                        if ok:
 
-                        (cod_sel, comp_row["ciclo_actual"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), role, comp_row["estado_actual"], comp_row["equipo_principal"], comp_row["horas_ciclo_actual"], com_txt.strip()),
+                            st.success(msg)
 
-                    )
+                            st.rerun()
 
-                    conn.commit()
+                        else:
 
-                    conn.close()
+                            st.error(msg)
 
-                    st.success("Comentario registrado en bitácora.")
+            with b2:
+
+                if st.button("📝 Guardar Comentario Manual y Estado (Sin Foto)", use_container_width=True):
+
+                    if not com_txt.strip():
+
+                        st.warning("Escribe un comentario manual antes de guardar.")
+
+                    else:
+
+                        conn = get_connection()
+
+                        cur = conn.cursor()
+
+                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                        cur.execute(
+
+                            "UPDATE componentes SET estado_actual = ?, equipo_principal = ? WHERE codigo_equipo = ?",
+
+                            (est_rapido, eq_rapido.strip(), cod_sel),
+
+                        )
+
+                        cur.execute(
+
+                            """
+
+                            INSERT INTO historial_eventos (
+
+                                codigo_equipo, numero_ciclo, fecha_hora, usuario_rol,
+
+                                tipo_operacion, estado_asignado, equipo_principal,
+
+                                horas_componente_evento, comentario_bitacora
+
+                            ) VALUES (?, ?, ?, ?, 'Registro Manual Planner', ?, ?, ?, ?)
+
+                            """,
+
+                            (cod_sel, comp_row["ciclo_actual"], now_str, autor_str, est_rapido, eq_rapido.strip(), comp_row["horas_ciclo_actual"], com_txt.strip()),
+
+                        )
+
+                        conn.commit()
+
+                        conn.close()
+
+                        st.success(f"Comentario y estado ({est_rapido}) guardados en el log del Ciclo #{int(comp_row['ciclo_actual'])}.")
+
+                        st.rerun()
 
 
 
@@ -1756,179 +2522,249 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with sub_estado:
 
-            c1, c2 = st.columns(2)
+            with st.container(border=True):
 
-            with c1:
+                st.markdown("**📍 Editar Ubicación Técnica SAP, Flota, Modelo, Ciclo y Costos**")
 
-                nuevo_estado = st.selectbox("Nuevo Estado:", ESTADOS_COMPONENTE, index=ESTADOS_COMPONENTE.index(comp_row["estado_actual"]) if comp_row["estado_actual"] in ESTADOS_COMPONENTE else 0)
+                u1, u2, u3, u4 = st.columns([1.8, 1.0, 1.0, 1.3])
 
-            with c2:
+                with u1:
 
-                equipo_dest = st.text_input("Equipo Principal:", value=str(comp_row["equipo_principal"]))
+                    nueva_ubic_sap = st.text_input(
 
+                        "Ubicación Técnica SAP:",
 
+                        value=str(comp_row["ubicacion_tecnica"] or ""),
 
-            instalado_por, reiniciar_ciclo = "N/A", False
+                        help="Si incluye TALLER/REP sugiere 'Por Reparar'; si incluye ALMACEN/LISTO sugiere 'Reparado'; si incluye el equipo sugiere 'Montado'.",
 
-            motivo_cambio, modo_falla = "N/A", "N/A"
+                    )
 
-            numero_ot, numero_oc, proveedor, tipo_interv, detalle_kit = "", "", "", "Ninguna", ""
+                estado_sugerido_sap = infer_estado_from_ubicacion_sap(nueva_ubic_sap, comp_row["estado_actual"])
 
-            costo_kit_txt, costo_rep_txt = "0", "0"
+                with u2:
 
+                    nueva_flota = st.selectbox(
 
+                        "Flota (4 Fijas):",
 
-            if nuevo_estado == "Montado":
+                        options=FLOTAS_MACRO,
 
-                m1, m2 = st.columns(2)
+                        index=FLOTAS_MACRO.index(comp_row["flota"]) if comp_row["flota"] in FLOTAS_MACRO else 0,
 
-                with m1:
+                    )
 
-                    instalado_por = st.radio("Instalado por:", ["Southern", "Contratista"], horizontal=True)
+                with u3:
 
-                with m2:
+                    nuevo_modelo = st.text_input("Modelo:", value=str(comp_row["modelo"] or "4100A"))
 
-                    reiniciar_ciclo = st.checkbox(f"Iniciar nueva vida ({int(comp_row['ciclo_actual']) + 1} vidas)", value=(comp_row["estado_actual"] != "Montado"))
+                with u4:
 
+                    equipo_dest = st.text_input("Equipo Principal:", value=str(comp_row["equipo_principal"]))
 
 
-            if nuevo_estado in ("Desmontado", "Por Reparar", "Salida por Reclamo", "De Baja"):
 
-                d1, d2 = st.columns(2)
+                st.caption(f"Estado deducido por Ubicación SAP (`{nueva_ubic_sap}`): **{estado_sugerido_sap}**")
 
-                with d1:
+                nuevo_estado = st.selectbox(
 
-                    motivo_cambio = st.selectbox("Motivo del cambio:", ["PCR por Horas", "Falla por Condición", "Reclamo Garantía"])
+                    "Confirmar Estado a Asignar:",
 
-                with d2:
+                    options=ESTADOS_COMPONENTE,
 
-                    modo_falla = st.selectbox("Modo de falla:", MODOS_FALLA_COMUNES, index=0 if motivo_cambio == "PCR por Horas" else 1)
-
-
-
-            if nuevo_estado in ("Reparado", "Por Reparar", "Salida por Reclamo") or st.checkbox("Registrar OT / OC / Costos", value=False):
-
-                r1, r2, r3 = st.columns(3)
-
-                with r1:
-
-                    numero_ot = st.text_input("N° OT SAP:")
-
-                with r2:
-
-                    numero_oc = st.text_input("N° Orden de Compra (OC):")
-
-                with r3:
-
-                    proveedor = st.text_input("Taller / Proveedor:")
-
-                k1, k2, k3 = st.columns(3)
-
-                with k1:
-
-                    tipo_interv = st.selectbox("Intervención:", ["Kit + Reparación General", "Kit de Mantenimiento", "Reparación General", "Ninguna"])
-
-                with k2:
-
-                    costo_kit_txt = st.text_input("Costo Kit (USD):", value="0")
-
-                with k3:
-
-                    costo_rep_txt = st.text_input("Costo Reparación (USD):", value="0")
-
-                detalle_kit = st.text_input("Detalle de Kit / Reparación:")
-
-
-
-            ok_k, c_kit, err_k = validate_numeric_input(costo_kit_txt, "Costo Kit", allow_zero=True, allow_negative=False, allow_decimal=True)
-
-            ok_r, c_rep, err_r = validate_numeric_input(costo_rep_txt, "Costo Reparación", allow_zero=True, allow_negative=False, allow_decimal=True)
-
-            if not ok_k:
-
-                st.error(err_k)
-
-            if not ok_r:
-
-                st.error(err_r)
-
-
-
-            com_est = st.text_input("Observación del cambio de estado:")
-
-            confirm_baja = True
-
-            if nuevo_estado == "De Baja":
-
-                st.warning("⚠️ Dar de baja retirará el componente de operación activa.")
-
-                confirm_baja = st.checkbox("Confirmo dar de baja este componente.")
-
-
-
-            if st.button("💾 Guardar Estado y Costos", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
-
-                costo_tot = round(float(c_kit or 0.0) + float(c_rep or 0.0), 2)
-
-                conn = get_connection()
-
-                cur = conn.cursor()
-
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                ciclo_db = int(comp_row["ciclo_actual"] or 1)
-
-                if nuevo_estado == "Montado" and reiniciar_ciclo:
-
-                    n_ciclo, n_hrs, n_gasto_c = ciclo_db + 1, 0.0, costo_tot
-
-                else:
-
-                    n_ciclo, n_hrs, n_gasto_c = ciclo_db, float(comp_row["horas_ciclo_actual"] or 0.0), float(comp_row["gasto_ciclo_actual_usd"] or 0.0) + costo_tot
-
-                n_gasto_t = float(comp_row["gasto_acumulado_total_usd"] or 0.0) + costo_tot
-
-
-
-                cur.execute(
-
-                    "UPDATE componentes SET estado_actual = ?, equipo_principal = ?, ciclo_actual = ?, horas_ciclo_actual = ?, gasto_ciclo_actual_usd = ?, gasto_acumulado_total_usd = ? WHERE codigo_equipo = ?",
-
-                    (nuevo_estado, equipo_dest.strip(), n_ciclo, round(n_hrs, 2), round(n_gasto_c, 2), round(n_gasto_t, 2), cod_sel),
+                    index=ESTADOS_COMPONENTE.index(estado_sugerido_sap) if estado_sugerido_sap in ESTADOS_COMPONENTE else 0,
 
                 )
 
-                cur.execute(
 
-                    """
 
-                    INSERT INTO historial_eventos (
+                instalado_por, reiniciar_ciclo = "N/A", False
 
-                        codigo_equipo, numero_ciclo, fecha_hora, usuario_rol, tipo_operacion,
+                motivo_cambio, modo_falla = "N/A", "N/A"
 
-                        estado_asignado, equipo_principal, horas_componente_evento, horas_sumadas,
+                numero_ot, numero_oc, proveedor, tipo_interv, detalle_kit = "", "", "", "Ninguna", ""
 
-                        instalado_por, motivo_cambio, modo_falla, numero_ot, numero_oc,
+                costo_kit_txt, costo_rep_txt = "0", "0"
 
-                        proveedor_reparador, tipo_intervencion, detalle_kit, costo_kit_usd,
 
-                        costo_reparacion_usd, costo_total_evento_usd, comentario_bitacora
 
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                if nuevo_estado == "Montado":
 
-                    """,
+                    m1, m2 = st.columns(2)
 
-                    (cod_sel, n_ciclo, now_str, role, f"Cambio de Estado ({nuevo_estado})", nuevo_estado, equipo_dest.strip(), round(n_hrs, 2), instalado_por, motivo_cambio, modo_falla, numero_ot.strip(), numero_oc.strip(), proveedor.strip(), tipo_interv, detalle_kit.strip(), round(float(c_kit or 0.0), 2), round(float(c_rep or 0.0), 2), costo_tot, (com_est or f"Cambio a {nuevo_estado}").strip()),
+                    with m1:
 
-                )
+                        instalado_por = st.radio("Instalado por:", ["Southern", "Contratista"], horizontal=True)
 
-                conn.commit()
+                    with m2:
 
-                conn.close()
+                        reiniciar_ciclo = st.checkbox(f"Iniciar nueva vida / ciclo ({int(comp_row['ciclo_actual']) + 1} vidas)", value=(comp_row["estado_actual"] != "Montado"))
 
-                st.success(f"Componente `{cod_sel}` guardado en estado **{nuevo_estado}**.")
 
-                st.rerun()
+
+                if nuevo_estado in ("Desmontado", "Por Reparar", "Salida por Reclamo", "De Baja"):
+
+                    d1, d2 = st.columns(2)
+
+                    with d1:
+
+                        motivo_cambio = st.selectbox("Motivo del retiro / cambio:", ["PCR por Horas", "Falla por Condición", "Reclamo Garantía"])
+
+                    with d2:
+
+                        modo_falla = st.selectbox("Modo de falla:", MODOS_FALLA_COMUNES, index=0 if motivo_cambio == "PCR por Horas" else 1)
+
+
+
+                if nuevo_estado in ("Reparado", "Por Reparar", "Salida por Reclamo") or st.checkbox("Registrar OT / OC / Costos de Reparación", value=False):
+
+                    r1, r2, r3 = st.columns(3)
+
+                    with r1:
+
+                        numero_ot = st.text_input("N° OT SAP:")
+
+                    with r2:
+
+                        numero_oc = st.text_input("N° Orden de Compra (OC):")
+
+                    with r3:
+
+                        proveedor = st.text_input("Taller / Proveedor:")
+
+                    k1, k2, k3 = st.columns(3)
+
+                    with k1:
+
+                        tipo_interv = st.selectbox("Intervención:", ["Kit + Reparación General", "Kit de Mantenimiento", "Reparación General", "Ninguna"])
+
+                    with k2:
+
+                        costo_kit_txt = st.text_input("Costo Kit (USD):", value="0")
+
+                    with k3:
+
+                        costo_rep_txt = st.text_input("Costo Reparación (USD):", value="0")
+
+                    detalle_kit = st.text_input("Detalle de Kit / Alcance de Reparación:")
+
+
+
+                ok_k, c_kit, err_k = validate_numeric_input(costo_kit_txt, "Costo Kit", allow_zero=True, allow_negative=False, allow_decimal=True)
+
+                ok_r, c_rep, err_r = validate_numeric_input(costo_rep_txt, "Costo Reparación", allow_zero=True, allow_negative=False, allow_decimal=True)
+
+                if not ok_k:
+
+                    st.error(err_k)
+
+                if not ok_r:
+
+                    st.error(err_r)
+
+
+
+                com_est = st.text_area("Comentario detallado para el Log del Ciclo:", height=80)
+
+                confirm_baja = True
+
+                if nuevo_estado == "De Baja":
+
+                    st.warning("⚠️ Dar de baja retirará el componente de la operación activa.")
+
+                    confirm_baja = st.checkbox("Confirmo dar de baja este componente.")
+
+
+
+                if st.button("💾 Guardar Cambios en el Log del Ciclo", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
+
+                    costo_tot = round(float(c_kit or 0.0) + float(c_rep or 0.0), 2)
+
+                    conn = get_connection()
+
+                    cur = conn.cursor()
+
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    ciclo_db = int(comp_row["ciclo_actual"] or 1)
+
+                    if nuevo_estado == "Montado" and reiniciar_ciclo:
+
+                        n_ciclo, n_hrs, n_gasto_c = ciclo_db + 1, 0.0, costo_tot
+
+                    else:
+
+                        n_ciclo, n_hrs, n_gasto_c = ciclo_db, float(comp_row["horas_ciclo_actual"] or 0.0), float(comp_row["gasto_ciclo_actual_usd"] or 0.0) + costo_tot
+
+                    n_gasto_t = float(comp_row["gasto_acumulado_total_usd"] or 0.0) + costo_tot
+
+
+
+                    cur.execute(
+
+                        """
+
+                        UPDATE componentes
+
+                        SET flota = ?, modelo = ?, equipo_principal = ?, ubicacion_tecnica = ?,
+
+                            estado_actual = ?, ciclo_actual = ?, horas_ciclo_actual = ?,
+
+                            gasto_ciclo_actual_usd = ?, gasto_acumulado_total_usd = ?
+
+                        WHERE codigo_equipo = ?
+
+                        """,
+
+                        (nueva_flota, normalize_model_name(nuevo_modelo), equipo_dest.strip().upper(), nueva_ubic_sap.strip().upper(), nuevo_estado, n_ciclo, round(n_hrs, 2), round(n_gasto_c, 2), round(n_gasto_t, 2), cod_sel),
+
+                    )
+
+                    cur.execute(
+
+                        """
+
+                        INSERT INTO historial_eventos (
+
+                            codigo_equipo, numero_ciclo, fecha_hora, usuario_rol, tipo_operacion,
+
+                            estado_asignado, equipo_principal, horas_componente_evento, horas_sumadas,
+
+                            instalado_por, motivo_cambio, modo_falla, numero_ot, numero_oc,
+
+                            proveedor_reparador, tipo_intervencion, detalle_kit, costo_kit_usd,
+
+                            costo_reparacion_usd, costo_total_evento_usd, comentario_bitacora
+
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+                        """,
+
+                        (
+
+                            cod_sel, n_ciclo, now_str, autor_str, f"Actualización ({nuevo_estado})",
+
+                            nuevo_estado, equipo_dest.strip().upper(), round(n_hrs, 2), instalado_por,
+
+                            motivo_cambio, modo_falla, numero_ot.strip(), numero_oc.strip(),
+
+                            proveedor.strip(), tipo_interv, detalle_kit.strip(),
+
+                            round(float(c_kit or 0.0), 2), round(float(c_rep or 0.0), 2), costo_tot,
+
+                            (com_est or f"Ubicación SAP: {nueva_ubic_sap.strip().upper()} -> Estado: {nuevo_estado}").strip(),
+
+                        ),
+
+                    )
+
+                    conn.commit()
+
+                    conn.close()
+
+                    st.success(f"Componente `{cod_sel}` actualizado en Flota **{nueva_flota}** (Modelo **{normalize_model_name(nuevo_modelo)}** · Ciclo #{n_ciclo}).")
+
+                    st.rerun()
 
 
 
@@ -1936,11 +2772,11 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with sub_horas:
 
-            st.write("Sube un solo archivo Excel/CSV para actualizar las horas de **todos los componentes Montados de todas las flotas**.")
+            st.write("Sube un archivo Excel/CSV o aplica horas por equipo para alimentar a **todos los componentes Montados** y dejar registro en el historial de corridas por tiempo.")
 
             st.download_button(
 
-                "📥 Descargar Plantilla Excel de Horas",
+                "📥 Descargar Plantilla Excel de Corrida de Horas",
 
                 data=generate_hours_template_excel(),
 
@@ -1970,7 +2806,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
                 if t_col and v_col:
 
-                    if st.button("🚀 Actualizar Horas de Componentes Montados", type="primary", use_container_width=True):
+                    if st.button("🚀 Ejecutar Corrida de Horas en Montados", type="primary", use_container_width=True):
 
                         upd_list = []
 
@@ -1982,9 +2818,9 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
                                 upd_list.append({"target_type": t_type, "target_value": str(r[t_col]).strip(), "mode": m_op, "value": num_h})
 
-                        n_upd, det = apply_hours_to_mounted_components(upd_list, role, f"Archivo ({archivo_hrs.name})")
+                        n_upd, det = apply_hours_to_mounted_components(upd_list, autor_str, f"Archivo ({archivo_hrs.name})")
 
-                        st.success(f"Se actualizaron {n_upd} componente(s) montado(s).")
+                        st.success(f"Corrida registrada: se actualizaron {n_upd} componente(s) montado(s).")
 
                         if det:
 
@@ -2002,7 +2838,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             with c_eq:
 
-                eq_quick = st.selectbox("O actualizar por Equipo Principal en pantalla:", sorted(df_all[df_all["estado_actual"] == "Montado"]["equipo_principal"].dropna().unique().tolist()) or ["SIN_EQUIPO"])
+                eq_quick = st.selectbox("O correr horas para un Equipo Principal en pantalla:", sorted(df_all[df_all["estado_actual"] == "Montado"]["equipo_principal"].dropna().unique().tolist()) or ["SIN_EQUIPO"])
 
             with c_hr:
 
@@ -2010,7 +2846,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             ok_hq, h_q_val, err_hq = validate_numeric_input(hrs_q_txt, "Horas", allow_zero=False, allow_negative=False, allow_decimal=True)
 
-            if st.button("⚡ Aplicar Horas al Equipo Seleccionado", use_container_width=True):
+            if st.button("⚡ Aplicar Corrida de Horas al Equipo", use_container_width=True):
 
                 if not ok_hq:
 
@@ -2018,9 +2854,29 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
                 else:
 
-                    n_upd, _ = apply_hours_to_mounted_components([{"target_type": "equipo_principal", "target_value": eq_quick, "mode": "add", "value": h_q_val}], role, f"Rápida ({eq_quick})")
+                    n_upd, det = apply_hours_to_mounted_components([{"target_type": "equipo_principal", "target_value": eq_quick, "mode": "add", "value": h_q_val}], autor_str, f"Rápida ({eq_quick})")
 
                     st.success(f"Se sumaron +{h_q_val} hrs a {n_upd} componente(s) montados en {eq_quick}.")
+
+                    if det:
+
+                        st.dataframe(pd.DataFrame(det), use_container_width=True, hide_index=True)
+
+
+
+            st.divider()
+
+            st.markdown("**📜 Historial General de Corridas de Horas por Tiempo**")
+
+            conn = get_connection()
+
+            df_log_h = pd.read_sql_query("SELECT * FROM log_carga_horas ORDER BY id_carga DESC LIMIT 50", conn)
+
+            conn.close()
+
+            if not df_log_h.empty:
+
+                st.dataframe(df_log_h, use_container_width=True, hide_index=True)
 
 
 
@@ -2028,13 +2884,13 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-# 7. SECCIÓN 3: AGREGAR COMPONENTE Y SINCRONIZAR EXCEL SAP
+# 8. PESTAÑA 3: INGRESAR COMPONENTE O SUBIR EXCEL SAP
 
 # ==============================================================================
 
 def render_tab_agregar() -> None:
 
-    sub_alta, sub_sap = st.tabs(["➕ Agregar Componente Individual", "🔄 Importar Lista Excel SAP"])
+    sub_alta, sub_sap = st.tabs(["➕ Ingresar Componente Manual", "🔄 Subir / Sincronizar Excel SAP"])
 
 
 
@@ -2042,35 +2898,107 @@ def render_tab_agregar() -> None:
 
         with st.container(border=True):
 
+            st.markdown("**1. Flota (4 Fijas), Modelo Compatible y Equipo Principal**")
+
+            j1, j2, j3 = st.columns(3)
+
+            with j1:
+
+                flota_sel = st.selectbox("🚜 Flota *:", options=FLOTAS_MACRO, index=0)
+
+            with j2:
+
+                modelos_sugeridos = list(CATALOGO_FLOTAS.get(flota_sel, {}).keys()) + ["Otro (escribir manual)"]
+
+                mod_pick = st.selectbox("⚙️ Modelo *:", options=modelos_sugeridos)
+
+                if mod_pick == "Otro (escribir manual)":
+
+                    modelo_final = normalize_model_name(st.text_input("Escribir Modelo:", placeholder="Ej. 4100A, PV271, 797F"))
+
+                else:
+
+                    modelo_final = mod_pick
+
+            with j3:
+
+                equipos_sugeridos = CATALOGO_FLOTAS.get(flota_sel, {}).get(mod_pick, []) + ["TALLER / ALMACEN", "Otro (escribir manual)"]
+
+                eq_pick = st.selectbox("🏷️ Equipo (Pala/Perfo/Volq) *:", options=equipos_sugeridos)
+
+                if eq_pick == "Otro (escribir manual)":
+
+                    equipo_final = st.text_input("Escribir Equipo:", placeholder="Ej. PALA4 (SHO004 / PATQ4)").strip().upper()
+
+                else:
+
+                    equipo_final = eq_pick
+
+
+
+            st.divider()
+
+            st.markdown("**2. Código SAP, Ubicación Técnica y Comentario del Planner**")
+
             c1, c2 = st.columns(2)
 
             with c1:
 
-                cod_m = st.text_input("Código Equipo SAP *:", placeholder="10045990")
+                cod_m = st.text_input("Código SAP del Componente *:", placeholder="Ej. BRASWIT231 o 10045990")
 
-                desc_m = st.text_input("Descripción del Componente *:", placeholder="MOTOR DE GIRO TRASERO")
+                desc_m = st.text_input("Descripción del Componente *:", placeholder="Ej. INTERRUPTOR / MOTOR DE GIRO")
 
-                ubic_m = st.text_input("Ubicación Técnica SAP *:", value="SPCC-TOQ-MIN-495H-SHO009-GIRO")
+                cod_corto_eq = equipo_final.split("(")[0].strip().replace(" ", "") if equipo_final else "EQ01"
 
-                flota_prev, eq_prev = parse_ubicacion_tecnica(ubic_m)
+                ubic_default = f"SPCC-TOQ-MIN-{modelo_final or '4100A'}-{cod_corto_eq}-SIST"
 
-                st.caption(f"Flota detectada: **{flota_prev}** · Equipo Principal: **{eq_prev}**")
+                ubic_m = st.text_input("Ubicación Técnica SAP *:", value=ubic_default)
+
+                est_sugerido = infer_estado_from_ubicacion_sap(ubic_m)
 
                 crit_m = st.selectbox("Criticidad ABC:", ["A", "B", "C"])
 
             with c2:
 
-                fab_m = st.text_input("Fabricante:", placeholder="KOMATSU / CAT")
+                est_m = st.selectbox(
+
+                    "Estado Inicial (sugerido por Ubicación SAP):",
+
+                    options=ESTADOS_COMPONENTE,
+
+                    index=ESTADOS_COMPONENTE.index(est_sugerido) if est_sugerido in ESTADOS_COMPONENTE else 0,
+
+                )
+
+                fab_m = st.text_input("Fabricante:", placeholder="KOMATSU / CAT / EPIROC")
 
                 serie_m = st.text_input("N° de Serie:", placeholder="SN-884920")
 
-                est_m = st.selectbox("Estado Inicial:", ESTADOS_COMPONENTE)
+                h1, h2, h3 = st.columns(3)
 
-                hrs_txt = st.text_input("Horas Iniciales:", value="0")
+                with h1:
 
-                costo_txt = st.text_input("Costo Inicial (USD):", value="0")
+                    hrs_txt = st.text_input("Horas Iniciales:", value="0")
 
-                vidas_txt = st.text_input("Vidas Iniciales (entero >= 1):", value="1")
+                with h2:
+
+                    costo_txt = st.text_input("Costo Inicial ($):", value="0")
+
+                with h3:
+
+                    vidas_txt = st.text_input("Vidas (>=1):", value="1")
+
+
+
+            comentario_inicial = st.text_area(
+
+                "Comentario inicial del Planner (ej. salió de la Pala 8 y está por reparar):",
+
+                placeholder="Ej. Salió de la Pala 8 (SHO008 / PATQ8) y queda por reparar...",
+
+                height=75,
+
+            )
 
 
 
@@ -2088,15 +3016,17 @@ def render_tab_agregar() -> None:
 
 
 
-            if st.button("💾 Guardar Nuevo Componente", type="primary", use_container_width=True):
+            if st.button("💾 Ingresar Componente", type="primary", use_container_width=True):
 
-                if not cod_m.strip() or not desc_m.strip():
+                if not cod_m.strip() or not desc_m.strip() or not modelo_final:
 
-                    st.error("El Código SAP y la Descripción son obligatorios.")
+                    st.error("El Código SAP, la Descripción y el Modelo son obligatorios.")
 
                 elif ok_h and ok_c and ok_v:
 
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    autor_alta = f"{st.session_state.user_role}" + (f" - {st.session_state.planner_nombre.strip()}" if st.session_state.planner_nombre.strip() else f" ({flota_sel})")
 
                     conn = get_connection()
 
@@ -2106,19 +3036,75 @@ def render_tab_agregar() -> None:
 
                         cur.execute(
 
-                            "INSERT INTO componentes (codigo_equipo, descripcion, flota, equipo_principal, ubicacion_tecnica, criticidad_abc, fabricante, serie, estado_actual, ciclo_actual, horas_acumuladas_totales, horas_ciclo_actual, gasto_acumulado_total_usd, gasto_ciclo_actual_usd, ultima_actualizacion_horas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            """
 
-                            (cod_m.strip(), desc_m.strip().upper(), flota_prev, eq_prev, ubic_m.strip().upper(), crit_m, (fab_m.strip() or "S/I").upper(), (serie_m.strip() or "S/N").upper(), est_m, int(v_val), round(h_val, 2), round(h_val, 2), round(c_val, 2), round(c_val, 2), now_str),
+                            INSERT INTO componentes (
+
+                                codigo_equipo, descripcion, flota, modelo, equipo_principal,
+
+                                ubicacion_tecnica, criticidad_abc, fabricante, serie,
+
+                                estado_actual, ciclo_actual, horas_acumuladas_totales,
+
+                                horas_ciclo_actual, gasto_acumulado_total_usd,
+
+                                gasto_ciclo_actual_usd, ultima_actualizacion_horas
+
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+                            """,
+
+                            (
+
+                                cod_m.strip().upper(), desc_m.strip().upper(), flota_sel, modelo_final,
+
+                                equipo_final, ubic_m.strip().upper(), crit_m,
+
+                                (fab_m.strip() or "S/I").upper(), (serie_m.strip() or "S/N").upper(),
+
+                                est_m, int(v_val), round(h_val, 2), round(h_val, 2),
+
+                                round(c_val, 2), round(c_val, 2), now_str,
+
+                            ),
+
+                        )
+
+                        cur.execute(
+
+                            """
+
+                            INSERT INTO historial_eventos (
+
+                                codigo_equipo, numero_ciclo, fecha_hora, usuario_rol,
+
+                                tipo_operacion, estado_asignado, equipo_principal,
+
+                                horas_componente_evento, costo_total_evento_usd, comentario_bitacora
+
+                            ) VALUES (?, ?, ?, ?, 'Alta de Componente', ?, ?, ?, ?, ?)
+
+                            """,
+
+                            (
+
+                                cod_m.strip().upper(), int(v_val), now_str, autor_alta, est_m,
+
+                                equipo_final, round(h_val, 2), round(c_val, 2),
+
+                                (comentario_inicial.strip() or f"Alta en Flota {flota_sel} · Modelo {modelo_final} · Ubicación SAP {ubic_m.strip().upper()}"),
+
+                            ),
 
                         )
 
                         conn.commit()
 
-                        st.success(f"Componente `{cod_m.strip()}` registrado en Flota {flota_prev}.")
+                        st.success(f"Componente `{cod_m.strip().upper()}` registrado en Flota **{flota_sel}** (Modelo **{modelo_final}** · Estado **{est_m}**).")
 
                     except sqlite3.IntegrityError:
 
-                        st.error(f"El código `{cod_m.strip()}` ya existe.")
+                        st.error(f"El código SAP `{cod_m.strip().upper()}` ya existe en la base de datos.")
 
                     finally:
 
@@ -2130,7 +3116,13 @@ def render_tab_agregar() -> None:
 
         with st.container(border=True):
 
-            st.write("Formato requerido (`Sheet1`): `Equipo`, `Denominación`, `Indicador ABC`, `Ubicac.técnica`, `Denominación3`, `Fabricante`, `Fabr. Nº-serie`, `Válido de`, `Fin de validez`.")
+            st.write(
+
+                "Sube tu archivo Excel de SAP (`Sheet1`). El sistema extrae automáticamente el **Modelo** (4to bloque de `Ubicac.técnica`), "
+
+                "el **Equipo Principal** (5to bloque), lo asigna a su **Flota** (`PALAS`, `PERFOS`, `VOLQUETES`, `AUXILIARES`) y deduce el **Estado**."
+
+            )
 
             st.download_button(
 
@@ -2170,7 +3162,7 @@ def render_tab_agregar() -> None:
 
 # ==============================================================================
 
-# 8. SECCIÓN 4: ESTRATEGIA Y BACKUP
+# 9. PESTAÑA 4: ESTRATEGIA Y BACKUP COMPLETO (.XLSX Y .DB)
 
 # ==============================================================================
 
@@ -2202,15 +3194,37 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            df_fl = df_comp.groupby("flota", as_index=False).agg(gasto=("gasto_acumulado_total_usd", "sum"), hrs=("horas_acumuladas_totales", "sum"))
+            df_fl = df_comp.groupby(["flota", "modelo"], as_index=False).agg(
+
+                gasto=("gasto_acumulado_total_usd", "sum"),
+
+                hrs=("horas_acumuladas_totales", "sum"),
+
+                equipos=("codigo_equipo", "count"),
+
+            )
 
             df_fl["costo_hr"] = df_fl.apply(lambda r: round(r["gasto"] / r["hrs"], 2) if r["hrs"] > 0 else 0.0, axis=1)
 
-            fig = px.bar(df_fl, x="flota", y="costo_hr", color="flota", text="costo_hr", title="Costo por Hora ($/hr) por Flota")
+            fig = px.bar(
+
+                df_fl,
+
+                x="modelo",
+
+                y="costo_hr",
+
+                color="flota",
+
+                text="costo_hr",
+
+                title="Costo por Hora ($/hr) por Flota y Modelo",
+
+            )
 
             fig.update_traces(texttemplate="$%{text:.2f}/hr", textposition="outside")
 
-            fig.update_layout(height=320, showlegend=False)
+            fig.update_layout(height=330)
 
             st.plotly_chart(fig, use_container_width=True)
 
@@ -2222,7 +3236,11 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
             st.dataframe(
 
-                df_comp.sort_values("costo_por_hora_usd", ascending=False).head(8)[["flota", "codigo_equipo", "descripcion", "costo_por_hora_usd", "estado_actual"]],
+                df_comp.sort_values("costo_por_hora_usd", ascending=False).head(10)[
+
+                    ["flota", "modelo", "codigo_equipo", "descripcion", "equipo_principal", "costo_por_hora_usd", "estado_actual"]
+
+                ],
 
                 use_container_width=True,
 
@@ -2234,7 +3252,7 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
     st.divider()
 
-    st.markdown("#### 🛡️ Respaldo Completo de Base de Datos")
+    st.markdown("#### 🛡️ Respaldo Completo de Base de Datos (Inventario + Log por Ciclo + Corridas de Horas)")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
 
@@ -2284,7 +3302,7 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-# 9. PUNTO DE ENTRADA PRINCIPAL (FLUJO ÚNICO Y DIRECTO)
+# 10. PUNTO DE ENTRADA PRINCIPAL
 
 # ==============================================================================
 
@@ -2298,7 +3316,7 @@ def main() -> None:
 
     conn = get_connection()
 
-    df_all = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, equipo_principal, codigo_equipo", conn)
+    df_all = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, modelo, equipo_principal, codigo_equipo", conn)
 
     conn.close()
 
@@ -2310,11 +3328,11 @@ def main() -> None:
 
     if st.session_state.user_role == "Campo-Tablet":
 
-        t_vis, t_upd = st.tabs(["👁️ 1. Visualizar Componentes", "✏️ 2. Actualizar y Subir Foto"])
+        t_vis, t_upd = st.tabs(["👁️ 1. Visualizar y Reemplazos", "✏️ 2. Editar, Foto y Comentario"])
 
         with t_vis:
 
-            render_tab_visualizar(df_flota)
+            render_tab_visualizar(df_all, df_flota)
 
         with t_upd:
 
@@ -2326,11 +3344,11 @@ def main() -> None:
 
             [
 
-                "👁️ 1. Visualizar",
+                "👁️ 1. Visualizar y Log por Ciclo",
 
-                "✏️ 2. Actualizar y Fotos",
+                "✏️ 2. Editar / Actualizar y Fotos",
 
-                "➕ 3. Agregar y SAP",
+                "➕ 3. Ingresar / Subir SAP",
 
                 "📊 4. Estrategia y Backup",
 
@@ -2340,7 +3358,7 @@ def main() -> None:
 
         with t_vis:
 
-            render_tab_visualizar(df_flota)
+            render_tab_visualizar(df_all, df_flota)
 
         with t_upd:
 
