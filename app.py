@@ -2,19 +2,21 @@
 
 """
 
-Sistema P.I.M. - Control de Inventarios | Planeamiento Mantenimiento Mina
+P.I.M. - CONTROL DE INVENTARIOS | PLANEAMIENTO MANTENIMIENTO MINA
 
-Estética: iOS / macOS Warm Glassmorphism (Crema/Arena en Claro · Grafito en Oscuro · Acento Coral/Terracota)
+Versión Producción Auditada:
 
-Correcciones:
+- Cero errores de renderizado CSS/HTML (todo CSS/HTML inyectado en línea única sin saltos ni sangrías).
 
-  1. Sin sangría en bloques HTML (elimina que Markdown muestre código crudo &lt;div class=...&gt;).
+- Navegación directa de un solo camino mediante 4 pestañas nativas:
 
-  2. Cambio de tema Claro/Oscuro/Sistema sin bucle de parpadeo (usando on_change nativo).
+  1. Visualizar (Flota, KPIs, Tarjetas y Hoja de Vida con Fotos FIFO)
 
-  3. Margen superior amplio (padding-top: 3.8rem) para que la barra de Streamlit no tape el encabezado.
+  2. Actualizar y Fotos (Foto FIFO, Cambio de Estado/OC/Kit y Carga Masiva de Horas)
 
-  4. Botones directos en cada tarjeta ("👁️ Hoja de Vida" y "✏️ Actualizar / Foto").
+  3. Agregar y SAP (Alta individual e importación de Inventario SAP Nov.xlsx)
+
+  4. Estrategia y Backup (Gráfico $/hr por flota, Ranking y Descarga Excel .xlsx / SQLite .db)
 
 """
 
@@ -38,8 +40,6 @@ import pandas as pd
 
 import plotly.express as px
 
-import plotly.graph_objects as go
-
 import streamlit as st
 
 from PIL import Image
@@ -48,7 +48,7 @@ from PIL import Image
 
 # ==============================================================================
 
-# 0. CONFIGURACIÓN INICIAL Y CONSTANTES CORPORATIVAS
+# 0. CONFIGURACIÓN INICIAL Y CONSTANTES
 
 # ==============================================================================
 
@@ -136,9 +136,35 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 # ==============================================================================
 
-# 1. UTILIDADES DE VALIDACIÓN NUMÉRICA, VIDAS Y BADGES DE FLOTA (UNA SOLA LÍNEA)
+# 1. ESTILO LIMPIO EN LÍNEA ÚNICA (IMPOSIBLE QUE SE ROMPA EN MARKDOWN)
 
 # ==============================================================================
+
+def inject_clean_css() -> None:
+
+    css_rules = (
+
+        ".block-container{padding-top:3.2rem !important;padding-bottom:2rem !important;max-width:1280px !important;}"
+
+        ".pim-header{background:linear-gradient(90deg,#1e293b 0%,#334155 100%);color:#ffffff;padding:1rem 1.4rem;border-radius:12px;margin-bottom:1rem;box-shadow:0 4px 12px rgba(0,0,0,0.08);}"
+
+        ".pim-header h2{color:#ffffff !important;margin:0;font-size:1.35rem;font-weight:800;letter-spacing:0.02em;}"
+
+        ".pim-header p{color:#cbd5e1 !important;margin:0.15rem 0 0 0;font-size:0.84rem;}"
+
+        ".flota-tag{display:inline-block;padding:0.18rem 0.55rem;border-radius:999px;font-size:0.74rem;font-weight:700;margin-right:0.35rem;}"
+
+        ".estado-tag{display:inline-block;padding:0.18rem 0.55rem;border-radius:999px;font-size:0.74rem;font-weight:700;}"
+
+        "div.stButton > button, div.stDownloadButton > button{border-radius:10px !important;font-weight:600 !important;}"
+
+    )
+
+    st.markdown(f"&lt;style&gt;{css_rules}&lt;/style&gt;", unsafe_allow_html=True)
+
+
+
+
 
 def format_vidas_label(vidas: int) -> str:
 
@@ -216,19 +242,19 @@ def validate_numeric_input(
 
     except ValueError:
 
-        return False, None, f"El campo '{field_name}' debe ser un número válido (sin texto)."
+        return False, None, f"El campo '{field_name}' debe ser numérico."
 
     if not allow_negative and num < 0:
 
-        return False, None, f"El campo '{field_name}' no permite valores negativos."
+        return False, None, f"El campo '{field_name}' no permite negativos."
 
     if not allow_zero and num == 0:
 
-        return False, None, f"El campo '{field_name}' debe ser mayor a cero."
+        return False, None, f"El campo '{field_name}' debe ser mayor a 0."
 
     if not allow_decimal and not num.is_integer():
 
-        return False, None, f"El campo '{field_name}' debe ser un número entero (sin decimales)."
+        return False, None, f"El campo '{field_name}' debe ser un número entero."
 
     return True, num, ""
 
@@ -236,73 +262,61 @@ def validate_numeric_input(
 
 
 
-def get_flota_badge_html(flota: str) -> str:
+def get_badges_line_html(flota: str, estado: str, vidas: int) -> str:
 
-    """Retorna HTML en una sola línea sin saltos ni espacios iniciales."""
+    """Devuelve una sola línea HTML sin saltos para identificar Flota, Estado y Vidas."""
 
     flota_clean = str(flota or "SIN_FLOTA").strip()
 
-    paleta = {
+    flota_colors = {
 
-        "495H": ("rgba(224, 109, 83, 0.18)", "#D95D43"),
+        "495H": ("#fee2e2", "#b91c1c"),
 
-        "410A": ("rgba(59, 130, 246, 0.18)", "#2563EB"),
+        "410A": ("#dbeafe", "#1d4ed8"),
 
-        "994F": ("rgba(46, 158, 107, 0.18)", "#2E9E6B"),
+        "994F": ("#dcfce7", "#15803d"),
 
-        "793F": ("rgba(217, 130, 43, 0.20)", "#C2701E"),
-
-        "797F": ("rgba(139, 92, 246, 0.18)", "#7C3AED"),
+        "793F": ("#fef3c7", "#b45309"),
 
     }
 
-    if flota_clean in paleta:
-
-        bg, fg = paleta[flota_clean]
-
-    else:
-
-        colores_extra = [
-
-            ("rgba(14, 165, 233, 0.18)", "#0284C7"),
-
-            ("rgba(236, 72, 153, 0.18)", "#DB2777"),
-
-            ("rgba(20, 184, 166, 0.18)", "#0D9488"),
-
-        ]
-
-        bg, fg = colores_extra[sum(ord(c) for c in flota_clean) % len(colores_extra)]
-
-    return f'&lt;span class=&quot;flota-pill&quot; style=&quot;background:{bg};color:{fg};border:1px solid {fg};&quot;&gt;🚜 Flota {flota_clean}&lt;/span&gt;'
+    f_bg, f_fg = flota_colors.get(flota_clean, ("#f1f5f9", "#334155"))
 
 
 
+    est_colors = {
 
+        "Montado": ("#dcfce7", "#15803d"),
 
-def get_status_badge_html(estado: str) -> str:
+        "Reparado": ("#dbeafe", "#1d4ed8"),
 
-    mapping = {
+        "Nuevo": ("#e0f2fe", "#0369a1"),
 
-        "Montado": ("badge-success", "● Montado"),
+        "Por Reparar": ("#ffedd5", "#c2410c"),
 
-        "Reparado": ("badge-primary", "● Reparado"),
+        "Salida por Reclamo": ("#fef3c7", "#b45309"),
 
-        "Nuevo": ("badge-primary", "✦ Nuevo"),
+        "Desmontado": ("#f1f5f9", "#475569"),
 
-        "Desmontado": ("badge-neutral", "○ Desmontado"),
-
-        "Por Reparar": ("badge-warning", "▲ Por Reparar"),
-
-        "Salida por Reclamo": ("badge-warning", "◆ Reclamo"),
-
-        "De Baja": ("badge-danger", "✕ De Baja"),
+        "De Baja": ("#fee2e2", "#b91c1c"),
 
     }
 
-    css_cls, label = mapping.get(estado, ("badge-neutral", estado))
+    e_bg, e_fg = est_colors.get(estado, ("#f1f5f9", "#475569"))
 
-    return f'&lt;span class=&quot;badge {css_cls}&quot;&gt;{label}&lt;/span&gt;'
+    v_lbl = format_vidas_label(vidas)
+
+
+
+    return (
+
+        f'<span class="flota-tag" style="background:{f_bg};color:{f_fg};">🚜 Flota {flota_clean}</span>'
+
+        f'<span class="estado-tag" style="background:{e_bg};color:{e_fg};">● {estado}</span> '
+
+        f'<span class="estado-tag" style="background:#f1f5f9;color:#334155;">🔄 {v_lbl}</span>'
+
+    )
 
 
 
@@ -310,405 +324,7 @@ def get_status_badge_html(estado: str) -> str:
 
 # ==============================================================================
 
-# 2. ESTÉTICA iOS / macOS ADAPTABLE (SIN PARPADEO Y CON ESPACIO SUPERIOR)
-
-# ==============================================================================
-
-def inject_ios_macos_css(theme_mode: str) -> None:
-
-    light_vars = """
-
-        --bg-app: #F7F3EB;
-
-        --bg-surface: #FFFFFF;
-
-        --bg-elevated: #EFE9DE;
-
-        --bg-input: #FFFFFF;
-
-        --text-primary: #1F1D1A;
-
-        --text-secondary: #5C564E;
-
-        --text-muted: #827B72;
-
-        --border-subtle: rgba(120, 100, 80, 0.20);
-
-        --border-strong: rgba(120, 100, 80, 0.35);
-
-        --accent: #E06D53;
-
-        --accent-hover: #C85A40;
-
-        --accent-soft: rgba(224, 109, 83, 0.15);
-
-        --success: #248A59;
-
-        --success-soft: rgba(36, 138, 89, 0.15);
-
-        --warning: #C8711B;
-
-        --warning-soft: rgba(200, 113, 27, 0.16);
-
-        --danger: #C93B3B;
-
-        --danger-soft: rgba(201, 59, 59, 0.15);
-
-        --shadow-card: 0 4px 14px rgba(45, 35, 25, 0.07);
-
-    """
-
-
-
-    dark_vars = """
-
-        --bg-app: #16171A;
-
-        --bg-surface: #212329;
-
-        --bg-elevated: #2B2E37;
-
-        --bg-input: #262931;
-
-        --text-primary: #F4F1EC;
-
-        --text-secondary: #B8B2A8;
-
-        --text-muted: #8E887F;
-
-        --border-subtle: rgba(255, 255, 255, 0.12);
-
-        --border-strong: rgba(255, 255, 255, 0.24);
-
-        --accent: #E67E65;
-
-        --accent-hover: #F08F78;
-
-        --accent-soft: rgba(230, 126, 101, 0.20);
-
-        --success: #45C28A;
-
-        --success-soft: rgba(69, 194, 138, 0.18);
-
-        --warning: #F0A352;
-
-        --warning-soft: rgba(240, 163, 82, 0.20);
-
-        --danger: #F06868;
-
-        --danger-soft: rgba(240, 104, 104, 0.20);
-
-        --shadow-card: 0 6px 18px rgba(0, 0, 0, 0.35);
-
-    """
-
-
-
-    if theme_mode == "Claro":
-
-        theme_css = f":root {{ {light_vars} }}"
-
-    elif theme_mode == "Oscuro":
-
-        theme_css = f":root {{ {dark_vars} }}"
-
-    else:
-
-        theme_css = f":root {{ {light_vars} }} @media (prefers-color-scheme: dark) {{ :root {{ {dark_vars} }} }}"
-
-
-
-    css = f"""
-
-&lt;style&gt;
-
-{theme_css}
-
-html, body, .stApp, [data-testid=&quot;stAppViewContainer&quot;], [data-testid=&quot;stHeader&quot;] {{
-
-    font-family: -apple-system, BlinkMacSystemFont, &quot;SF Pro Text&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif !important;
-
-    background-color: var(--bg-app) !important;
-
-    color: var(--text-primary) !important;
-
-}}
-
-[data-testid=&quot;stHeader&quot;] {{
-
-    background: transparent !important;
-
-}}
-
-.block-container {{
-
-    padding-top: 3.6rem !important;
-
-    padding-bottom: 2.5rem !important;
-
-    max-width: 1320px !important;
-
-    overflow-x: hidden !important;
-
-}}
-
-p, span, label, div, h1, h2, h3, h4, h5, h6 {{
-
-    color: var(--text-primary);
-
-}}
-
-.mac-glass-card {{
-
-    background-color: var(--bg-surface) !important;
-
-    border: 1px solid var(--border-subtle) !important;
-
-    border-radius: 16px !important;
-
-    box-shadow: var(--shadow-card) !important;
-
-    padding: 1rem 1.15rem !important;
-
-    margin-bottom: 0.65rem !important;
-
-}}
-
-.responsive-kpi-grid {{
-
-    display: grid;
-
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-
-    gap: 0.75rem;
-
-    margin-bottom: 0.9rem;
-
-}}
-
-@media (max-width: 1024px) {{
-
-    .responsive-kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-
-}}
-
-@media (max-width: 640px) {{
-
-    .responsive-kpi-grid {{ grid-template-columns: 1fr; }}
-
-    .block-container {{ padding-top: 3.2rem !important; padding-left: 0.75rem !important; padding-right: 0.75rem !important; }}
-
-    div.stButton &gt; button, div.stDownloadButton &gt; button {{
-
-        min-height: 44px !important;
-
-        font-size: 0.92rem !important;
-
-    }}
-
-}}
-
-.kpi-label {{
-
-    font-size: 0.72rem;
-
-    font-weight: 700;
-
-    text-transform: uppercase;
-
-    letter-spacing: 0.05em;
-
-    color: var(--text-secondary) !important;
-
-}}
-
-.kpi-num {{
-
-    font-size: 1.45rem;
-
-    font-weight: 800;
-
-    color: var(--text-primary) !important;
-
-    margin-top: 0.15rem;
-
-}}
-
-.kpi-meta {{
-
-    font-size: 0.76rem;
-
-    color: var(--text-muted) !important;
-
-    margin-top: 0.15rem;
-
-}}
-
-.flota-pill {{
-
-    display: inline-flex;
-
-    align-items: center;
-
-    padding: 0.22rem 0.6rem;
-
-    font-size: 0.72rem;
-
-    font-weight: 800;
-
-    border-radius: 999px;
-
-}}
-
-.badge {{
-
-    display: inline-flex;
-
-    align-items: center;
-
-    padding: 0.22rem 0.6rem;
-
-    font-size: 0.72rem;
-
-    font-weight: 700;
-
-    border-radius: 999px;
-
-}}
-
-.badge-success {{ background: var(--success-soft) !important; color: var(--success) !important; }}
-
-.badge-primary {{ background: var(--accent-soft) !important; color: var(--accent) !important; }}
-
-.badge-warning {{ background: var(--warning-soft) !important; color: var(--warning) !important; }}
-
-.badge-danger  {{ background: var(--danger-soft) !important; color: var(--danger) !important; }}
-
-.badge-neutral {{ background: var(--bg-elevated) !important; color: var(--text-secondary) !important; border: 1px solid var(--border-subtle) !important; }}
-
-
-
-div.stButton &gt; button, div.stDownloadButton &gt; button {{
-
-    border-radius: 12px !important;
-
-    font-weight: 600 !important;
-
-    min-height: 40px !important;
-
-}}
-
-div.stButton &gt; button[kind=&quot;primary&quot;] {{
-
-    background-color: var(--accent) !important;
-
-    border: 1px solid var(--accent) !important;
-
-    color: #FFFFFF !important;
-
-}}
-
-div.stButton &gt; button[kind=&quot;primary&quot;] * {{
-
-    color: #FFFFFF !important;
-
-}}
-
-div.stButton &gt; button[kind=&quot;primary&quot;]:hover {{
-
-    background-color: var(--accent-hover) !important;
-
-    border-color: var(--accent-hover) !important;
-
-}}
-
-div.stButton &gt; button[kind=&quot;secondary&quot;], div.stDownloadButton &gt; button {{
-
-    background-color: var(--bg-surface) !important;
-
-    color: var(--text-primary) !important;
-
-    border: 1px solid var(--border-strong) !important;
-
-}}
-
-div.stButton &gt; button[kind=&quot;secondary&quot;] *, div.stDownloadButton &gt; button * {{
-
-    color: var(--text-primary) !important;
-
-}}
-
-div[data-baseweb=&quot;input&quot;] &gt; div,
-
-div[data-baseweb=&quot;select&quot;] &gt; div,
-
-textarea {{
-
-    background-color: var(--bg-input) !important;
-
-    border-color: var(--border-strong) !important;
-
-    border-radius: 12px !important;
-
-    color: var(--text-primary) !important;
-
-}}
-
-div[data-baseweb=&quot;select&quot;] span,
-
-div[data-baseweb=&quot;input&quot;] input,
-
-textarea {{
-
-    color: var(--text-primary) !important;
-
-}}
-
-button[data-baseweb=&quot;tab&quot;] {{
-
-    border-radius: 10px !important;
-
-    color: var(--text-secondary) !important;
-
-    font-weight: 600 !important;
-
-}}
-
-button[data-baseweb=&quot;tab&quot;][aria-selected=&quot;true&quot;] {{
-
-    color: var(--accent) !important;
-
-    background-color: var(--accent-soft) !important;
-
-}}
-
-.danger-zone {{
-
-    background: var(--danger-soft) !important;
-
-    border: 1px solid var(--danger) !important;
-
-    border-radius: 14px !important;
-
-    padding: 0.9rem 1.1rem !important;
-
-    margin: 0.6rem 0 !important;
-
-}}
-
-&lt;/style&gt;
-
-"""
-
-    st.markdown(css, unsafe_allow_html=True)
-
-
-
-
-
-# ==============================================================================
-
-# 3. PERSISTENCIA SQLITE3 CON MODO WAL
+# 2. BASE DE DATOS SQLITE3 (MODO WAL PARA CONCURRENCIA EN RED LOCAL)
 
 # ==============================================================================
 
@@ -1038,6 +654,12 @@ def seed_initial_demo_data() -> None:
 
 
 
+# ==============================================================================
+
+# 3. FUNCIONES OPERATIVAS (FOTOS FIFO, CARGA HORAS, SAP Y BACKUP)
+
+# ==============================================================================
+
 def save_component_photo_fifo(
 
     codigo_equipo: str,
@@ -1054,7 +676,7 @@ def save_component_photo_fifo(
 
     if uploaded_file is None:
 
-        return False, "No se seleccionó ningún archivo de imagen.", None
+        return False, "No se seleccionó ninguna imagen.", None
 
 
 
@@ -1134,7 +756,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Foto guardada en Espacio #1."
+            msg_rotacion = "Fotografía guardada en Espacio #1."
 
         elif not f2_path:
 
@@ -1146,7 +768,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Foto guardada en Espacio #2."
+            msg_rotacion = "Fotografía guardada en Espacio #2."
 
         else:
 
@@ -1178,7 +800,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Rotación FIFO aplicada: se borró la foto #1, la #2 pasó a #1 y la nueva quedó en #2."
+            msg_rotacion = "Rotación FIFO completada: se eliminó la foto #1, la #2 pasó a #1 y la nueva quedó en #2."
 
 
 
@@ -1196,7 +818,7 @@ def save_component_photo_fifo(
 
                     horas_componente_evento, comentario_bitacora, foto_path
 
-                ) VALUES (?, ?, ?, ?, 'Inspección Fotográfica / Bitácora', ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'Inspección Fotográfica', ?, ?, ?, ?, ?)
 
                 """,
 
@@ -1296,11 +918,7 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
         cur.execute("SELECT codigo_equipo FROM componentes WHERE codigo_equipo = ?", (codigo_equipo,))
 
-        existe = cur.fetchone()
-
-
-
-        if not existe:
+        if not cur.fetchone():
 
             cur.execute(
 
@@ -1518,7 +1136,7 @@ def apply_hours_to_mounted_components(
 
             "INSERT INTO log_carga_horas (fecha_hora, usuario, metodo_carga, componentes_afectados, detalle) VALUES (?, ?, ?, ?, ?)",
 
-            (now_str, usuario_rol, metodo_carga, len(afectados_detalle), f"Actualizados {len(afectados_detalle)} componentes montados en todas las flotas."),
+            (now_str, usuario_rol, metodo_carga, len(afectados_detalle), f"Actualizados {len(afectados_detalle)} componentes montados."),
 
         )
 
@@ -1676,23 +1294,19 @@ def generate_hours_template_excel() -> bytes:
 
 # ==============================================================================
 
-# 4. NAVEGACIÓN SIMPLIFICADA Y SELECTOR DE FLOTA (SIN BUCLE DE PARPADEO)
+# 4. CABECERA Y FILTRO GLOBAL POR FLOTA
 
 # ==============================================================================
 
-def init_ui_session_state() -> None:
+def init_session_state() -> None:
 
     defaults = {
-
-        "current_view": "VISUALIZAR",
 
         "user_role": "Planner",
 
         "active_flota": "Todas",
 
         "selected_component": None,
-
-        "theme_mode": "Oscuro",
 
         "vida_idx": 1,
 
@@ -1710,109 +1324,17 @@ def init_ui_session_state() -> None:
 
 
 
-def render_compact_header_and_nav() -> None:
+def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
-    # Cabecera visible debajo de la barra superior de Streamlit
+    st.markdown(
 
-    c_title, c_role, c_theme = st.columns([2.8, 1.1, 1.1])
+        '&lt;div class=&quot;pim-header&quot;&gt;&lt;h2&gt;⚙️ P.I.M. — CONTROL DE INVENTARIOS&lt;/h2&gt;&lt;p&gt;PLANEAMIENTO MANTENIMIENTO MINA · Control por Flota y Trazabilidad SAP PM&lt;/p&gt;&lt;/div&gt;',
 
-    with c_title:
+        unsafe_allow_html=True,
 
-        st.markdown(
-
-            '&lt;div style=&quot;padding-bottom:0.3rem;&quot;&gt;&lt;span style=&quot;font-size:1.4rem;font-weight:900;color:var(--accent);&quot;&gt;⚙️ P.I.M.&lt;/span&gt; &lt;span style=&quot;font-size:1.05rem;font-weight:800;color:var(--text-primary);margin-left:0.3rem;&quot;&gt;CONTROL DE INVENTARIOS&lt;/span&gt;&lt;div style=&quot;font-size:0.78rem;color:var(--text-secondary);&quot;&gt;Planeamiento Mantenimiento Mina · Gestión por Flota&lt;/div&gt;&lt;/div&gt;',
-
-            unsafe_allow_html=True,
-
-        )
-
-    with c_role:
-
-        st.selectbox(
-
-            "Perfil:",
-
-            options=ROLES_SISTEMA,
-
-            key="user_role",
-
-        )
-
-    with c_theme:
-
-        st.selectbox(
-
-            "Apariencia:",
-
-            options=["Oscuro", "Claro", "Sistema"],
-
-            key="theme_mode",
-
-        )
+    )
 
 
-
-    role = st.session_state.user_role
-
-    if role == "Campo-Tablet" and st.session_state.current_view not in ("VISUALIZAR", "ACTUALIZAR"):
-
-        st.session_state.current_view = "VISUALIZAR"
-
-
-
-    if role == "Campo-Tablet":
-
-        views = [
-
-            ("VISUALIZAR", "👁️ Visualizar Componentes"),
-
-            ("ACTUALIZAR", "✏️ Actualizar / Subir Foto"),
-
-        ]
-
-    else:
-
-        views = [
-
-            ("VISUALIZAR", "👁️ Visualizar"),
-
-            ("ACTUALIZAR", "✏️ Actualizar / Foto"),
-
-            ("AGREGAR", "➕ Agregar Componente"),
-
-            ("ESTRATEGIA", "📊 Estrategia y Backup"),
-
-        ]
-
-
-
-    nav_cols = st.columns(len(views))
-
-    for i, (v_id, v_label) in enumerate(views):
-
-        with nav_cols[i]:
-
-            if st.button(
-
-                v_label,
-
-                key=f"nav_btn_{v_id}",
-
-                type="primary" if st.session_state.current_view == v_id else "secondary",
-
-                use_container_width=True,
-
-            ):
-
-                st.session_state.current_view = v_id
-
-                st.rerun()
-
-
-
-
-
-def render_flota_selector(df_all: pd.DataFrame) -> pd.DataFrame:
 
     flotas = ["Todas"] + sorted(df_all["flota"].dropna().unique().tolist())
 
@@ -1822,33 +1344,15 @@ def render_flota_selector(df_all: pd.DataFrame) -> pd.DataFrame:
 
 
 
-    c_fl, c_badge = st.columns([2.2, 2.8])
+    c_flota, c_rol = st.columns([2.2, 1.2])
 
-    with c_fl:
+    with c_flota:
 
-        st.selectbox(
+        st.selectbox("🚜 Flota de trabajo (Espacio del Planner):", options=flotas, key="active_flota")
 
-            "🚜 Espacio de Flota (Control del Planner):",
+    with c_rol:
 
-            options=flotas,
-
-            key="active_flota",
-
-        )
-
-    with c_badge:
-
-        st.write("")
-
-        sel = st.session_state.active_flota
-
-        if sel == "Todas":
-
-            st.markdown('<span class="badge badge-primary">Vista Global: Todas las Flotas</span>', unsafe_allow_html=True)
-
-        else:
-
-            st.markdown(get_flota_badge_html(sel), unsafe_allow_html=True)
+        st.selectbox("👤 Perfil:", options=ROLES_SISTEMA, key="user_role")
 
 
 
@@ -1860,27 +1364,17 @@ def render_flota_selector(df_all: pd.DataFrame) -> pd.DataFrame:
 
 # ==============================================================================
 
-# 5. VENTANA 1: VISUALIZAR (TARJETAS FUNCIONALES SIN CÓDIGO ROTO + HOJA DE VIDA)
+# 5. SECCIÓN 1: VISUALIZAR (TARJETAS NATIVAS + HOJA DE VIDA + FOTOS)
 
 # ==============================================================================
 
-def render_view_visualizar() -> None:
+def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
-    conn = get_connection()
+    if df_flota.empty:
 
-    df_all = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, equipo_principal, codigo_equipo", conn)
-
-    if df_all.empty:
-
-        conn.close()
-
-        st.info("Aún no hay componentes. Ve a **➕ Agregar Componente** para importar tu Excel SAP o registrar uno.")
+        st.info("No hay componentes en esta flota.")
 
         return
-
-
-
-    df_flota = render_flota_selector(df_all)
 
 
 
@@ -1898,23 +1392,15 @@ def render_view_visualizar() -> None:
 
 
 
-    kpi_html = (
+    k1, k2, k3, k4 = st.columns(4)
 
-        '<div class="responsive-kpi-grid">'
+    k1.metric("Componentes", f"{total}", f"Flota: {st.session_state.active_flota}")
 
-        f'<div class="mac-glass-card"><div class="kpi-label">Componentes</div><div class="kpi-num">{total}</div><div class="kpi-meta">Flota: {st.session_state.active_flota}</div></div>'
+    k2.metric("Montados", f"{montados}", "En operación")
 
-        f'<div class="mac-glass-card"><div class="kpi-label">Montados</div><div class="kpi-num" style="color:var(--success);">{montados}</div><div class="kpi-meta">En operación</div></div>'
+    k3.metric("Por Reparar / Taller", f"{taller}", "Pendientes")
 
-        f'<div class="mac-glass-card"><div class="kpi-label">Por Reparar / Taller</div><div class="kpi-num" style="color:var(--warning);">{taller}</div><div class="kpi-meta">Atención pendiente</div></div>'
-
-        f'<div class="mac-glass-card"><div class="kpi-label">Gasto · Costo/Hr</div><div class="kpi-num">${gasto:,.0f}</div><div class="kpi-meta" style="color:var(--danger);font-weight:700;">${c_hr:,.2f} USD/hr</div></div>'
-
-        '</div>'
-
-    )
-
-    st.markdown(kpi_html, unsafe_allow_html=True)
+    k4.metric("Gasto Acumulado", f"${gasto:,.0f}", f"${c_hr:,.2f} USD/hr")
 
 
 
@@ -1922,15 +1408,15 @@ def render_view_visualizar() -> None:
 
     with f1:
 
-        sel_eq = st.selectbox("Equipo:", ["Todos"] + sorted(df_flota["equipo_principal"].dropna().unique().tolist()))
+        sel_eq = st.selectbox("Equipo Principal:", ["Todos"] + sorted(df_flota["equipo_principal"].dropna().unique().tolist()), key="vis_eq")
 
     with f2:
 
-        sel_est = st.selectbox("Estado:", ["Todos"] + ESTADOS_COMPONENTE)
+        sel_est = st.selectbox("Estado:", ["Todos"] + ESTADOS_COMPONENTE, key="vis_est")
 
     with f3:
 
-        q = st.text_input("Buscar:", placeholder="Código SAP, descripción o serie...")
+        q = st.text_input("Buscar componente:", placeholder="Código SAP, descripción o serie...", key="vis_q")
 
 
 
@@ -1962,17 +1448,15 @@ def render_view_visualizar() -> None:
 
     if df_filt.empty:
 
-        conn.close()
-
-        st.warning("No se encontraron componentes con esos filtros.")
+        st.warning("Sin coincidencias para este filtro.")
 
         return
 
 
 
-    # Grilla de tarjetas con botones funcionales en cada tarjeta (3 por fila en escritorio, 1 en móvil)
+    # Tarjetas limpias usando contenedores nativos de Streamlit (100% libres de errores HTML)
 
-    rows_list = [r for _, r in df_filt.head(18).iterrows()]
+    rows_list = [r for _, r in df_filt.head(15).iterrows()]
 
     for idx in range(0, len(rows_list), 3):
 
@@ -1988,63 +1472,25 @@ def render_view_visualizar() -> None:
 
                 c_hr_item = (r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"]) if r["horas_acumuladas_totales"] > 0 else 0.0
 
-                flota_pill = get_flota_badge_html(r["flota"])
-
-                status_pill = get_status_badge_html(r["estado_actual"])
-
-                vidas_txt = format_vidas_label(r["ciclo_actual"])
-
-
-
-                card_html = (
-
-                    '<div class="mac-glass-card">'
-
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.4rem;">{flota_pill}{status_pill}</div>'
-
-                    f'<div style="font-size:0.75rem;color:var(--text-muted);font-weight:700;">SAP: {cod_item} · Equipo {r["equipo_principal"]}</div>'
-
-                    f'<div style="font-weight:700;font-size:0.95rem;margin:0.2rem 0 0.45rem 0;">{r["descripcion"]}</div>'
-
-                    f'<div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text-secondary);">'
-
-                    f'<span>🔄 <b>{vidas_txt}</b></span>'
-
-                    f'<span>⏱️ {float(r["horas_ciclo_actual"]):,.0f} hrs</span>'
-
-                    f'<span>💵 ${c_hr_item:,.2f}/hr</span>'
-
-                    '</div></div>'
-
-                )
-
                 with cols[c_i]:
 
-                    st.markdown(card_html, unsafe_allow_html=True)
+                    with st.container(border=True):
 
-                    b_ver, b_upd = st.columns(2)
+                        st.markdown(get_badges_line_html(r["flota"], r["estado_actual"], r["ciclo_actual"]), unsafe_allow_html=True)
 
-                    with b_ver:
+                        st.markdown(f"**{r['descripcion']}**")
 
-                        if st.button("👁️ Ver Ficha", key=f"ver_{cod_item}", use_container_width=True):
+                        st.caption(f"SAP: `{cod_item}` · Equipo: **{r['equipo_principal']}** · ⏱️ {float(r['horas_ciclo_actual']):,.0f} hrs · 💵 ${c_hr_item:,.2f}/hr")
+
+                        if st.button("🔍 Ver Hoja de Vida", key=f"sel_card_{cod_item}", use_container_width=True):
 
                             st.session_state.selected_component = cod_item
 
                             st.rerun()
 
-                    with b_upd:
-
-                        if st.button("✏️ Actualizar", key=f"upd_{cod_item}", type="primary", use_container_width=True):
-
-                            st.session_state.selected_component = cod_item
-
-                            st.session_state.current_view = "ACTUALIZAR"
-
-                            st.rerun()
 
 
-
-    st.markdown("---")
+    st.divider()
 
     opciones = [f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} - {r['equipo_principal']})" for _, r in df_filt.iterrows()]
 
@@ -2052,7 +1498,7 @@ def render_view_visualizar() -> None:
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("📋 Hoja de Vida Detallada del Componente:", opciones, index=idx_def)
+    sel_comp = st.selectbox("📋 Hoja de Vida del Componente Seleccionado:", opciones, index=idx_def, key="vis_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -2060,73 +1506,57 @@ def render_view_visualizar() -> None:
 
 
 
+    comp = df_filt[df_filt["codigo_equipo"] == cod_sel].iloc[0]
+
+    total_vidas = max(0, int(comp["ciclo_actual"] or 1))
+
     if st.session_state.vida_comp_ref != cod_sel:
 
         st.session_state.vida_comp_ref = cod_sel
 
-        st.session_state.vida_idx = max(1, int(df_filt[df_filt["codigo_equipo"] == cod_sel].iloc[0]["ciclo_actual"] or 1))
-
-
-
-    comp = df_filt[df_filt["codigo_equipo"] == cod_sel].iloc[0]
-
-    total_vidas = max(0, int(comp["ciclo_actual"] or 1))
+        st.session_state.vida_idx = max(1, total_vidas)
 
     nav_state = get_vidas_navigation_state(total_vidas, st.session_state.vida_idx)
 
 
 
-    c_det, c_go = st.columns([3.4, 1.3])
+    with st.container(border=True):
 
-    with c_det:
+        c_info, c_vidas = st.columns([3.2, 1.2])
 
-        ficha_html = (
+        with c_info:
 
-            '<div class="mac-glass-card">'
+            st.markdown(get_badges_line_html(comp["flota"], comp["estado_actual"], total_vidas), unsafe_allow_html=True)
 
-            f'<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.35rem;">{get_flota_badge_html(comp["flota"])}{get_status_badge_html(comp["estado_actual"])}<span class="badge badge-neutral">🔄 {nav_state["label"]}</span></div>'
+            st.subheader(comp["descripcion"])
 
-            f'<h3 style="margin:0.15rem 0;">{comp["descripcion"]}</h3>'
+            st.write(f"**Código SAP:** `{comp['codigo_equipo']}` · **Equipo:** `{comp['equipo_principal']}` · **Fabricante:** {comp['fabricante']} · **Serie:** {comp['serie']} · **ABC:** {comp['criticidad_abc']}")
 
-            f'<div style="font-size:0.84rem;color:var(--text-secondary);"><b>SAP:</b> {comp["codigo_equipo"]} · <b>Equipo:</b> {comp["equipo_principal"]} · <b>Serie:</b> {comp["serie"]} · <b>Fabricante:</b> {comp["fabricante"]}</div>'
+            st.write(f"⏱️ **Hrs Ciclo:** {float(comp['horas_ciclo_actual']):,.1f} hrs | ⏳ **Hrs Totales:** {float(comp['horas_acumuladas_totales']):,.1f} hrs | 💵 **Costo Ciclo:** ${float(comp['gasto_ciclo_actual_usd']):,.2f} | 🏦 **Costo Total:** ${float(comp['gasto_acumulado_total_usd']):,.2f}")
 
-            f'<div style="font-size:0.86rem;color:var(--text-primary);margin-top:0.45rem;">⏱️ <b>Hrs Ciclo:</b> {float(comp["horas_ciclo_actual"]):,.1f} hrs &nbsp;|&nbsp; ⏳ <b>Hrs Totales:</b> {float(comp["horas_acumuladas_totales"]):,.1f} hrs &nbsp;|&nbsp; 💵 <b>Costo Acumulado:</b> ${float(comp["gasto_acumulado_total_usd"]):,.2f} USD</div>'
+        with c_vidas:
 
-            '</div>'
+            st.metric("Vidas Registradas", nav_state["label"])
 
-        )
+            if nav_state["show_nav"]:
 
-        st.markdown(ficha_html, unsafe_allow_html=True)
+                b1, b2 = st.columns(2)
 
-    with c_go:
+                with b1:
 
-        st.write("")
+                    if st.button("◀ Ant.", disabled=nav_state["disable_prev"], use_container_width=True):
 
-        if st.button("✏️ Actualizar / Subir Foto", key="ficha_go_upd", type="primary", use_container_width=True):
+                        st.session_state.vida_idx = max(1, nav_state["current"] - 1)
 
-            st.session_state.current_view = "ACTUALIZAR"
+                        st.rerun()
 
-            st.rerun()
+                with b2:
 
-        if nav_state["show_nav"]:
+                    if st.button("Sig. ▶", disabled=nav_state["disable_next"], use_container_width=True):
 
-            b1, b2 = st.columns(2)
+                        st.session_state.vida_idx = min(total_vidas, nav_state["current"] + 1)
 
-            with b1:
-
-                if st.button("◀ Vida Ant.", disabled=nav_state["disable_prev"], use_container_width=True):
-
-                    st.session_state.vida_idx = max(1, nav_state["current"] - 1)
-
-                    st.rerun()
-
-            with b2:
-
-                if st.button("Vida Sig. ▶", disabled=nav_state["disable_next"], use_container_width=True):
-
-                    st.session_state.vida_idx = min(total_vidas, nav_state["current"] + 1)
-
-                    st.rerun()
+                        st.rerun()
 
 
 
@@ -2134,33 +1564,39 @@ def render_view_visualizar() -> None:
 
     with p1:
 
-        st.markdown('<div class="mac-glass-card"><b>📷 Foto #1 (Previa)</b></div>', unsafe_allow_html=True)
+        with st.container(border=True):
 
-        if comp["foto_1_path"] and os.path.exists(comp["foto_1_path"]):
+            st.markdown("**📷 Fotografía #1 (Previa)**")
 
-            st.image(comp["foto_1_path"], use_container_width=True)
+            if comp["foto_1_path"] and os.path.exists(comp["foto_1_path"]):
 
-            st.caption(f"{comp['foto_1_fecha'] or ''} — {comp['foto_1_comentario'] or ''}")
+                st.image(comp["foto_1_path"], use_container_width=True)
 
-        else:
+                st.caption(f"{comp['foto_1_fecha'] or ''} — {comp['foto_1_comentario'] or ''}")
 
-            st.caption("Sin fotografía en espacio #1.")
+            else:
+
+                st.caption("Sin fotografía en espacio #1.")
 
     with p2:
 
-        st.markdown('<div class="mac-glass-card"><b>📷 Foto #2 (Más Reciente)</b></div>', unsafe_allow_html=True)
+        with st.container(border=True):
 
-        if comp["foto_2_path"] and os.path.exists(comp["foto_2_path"]):
+            st.markdown("**📷 Fotografía #2 (Más Reciente)**")
 
-            st.image(comp["foto_2_path"], use_container_width=True)
+            if comp["foto_2_path"] and os.path.exists(comp["foto_2_path"]):
 
-            st.caption(f"{comp['foto_2_fecha'] or ''} — {comp['foto_2_comentario'] or ''}")
+                st.image(comp["foto_2_path"], use_container_width=True)
 
-        else:
+                st.caption(f"{comp['foto_2_fecha'] or ''} — {comp['foto_2_comentario'] or ''}")
 
-            st.caption("Sin fotografía en espacio #2.")
+            else:
+
+                st.caption("Sin fotografía en espacio #2.")
 
 
+
+    conn = get_connection()
 
     df_eventos = pd.read_sql_query("SELECT * FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC", conn, params=(cod_sel,))
 
@@ -2174,7 +1610,7 @@ def render_view_visualizar() -> None:
 
     if not df_eventos.empty:
 
-        st.markdown("#### 📓 Historial de Costos y Bitácora")
+        st.markdown("**📓 Historial de Eventos, OC/OT y Bitácora**")
 
         st.dataframe(
 
@@ -2192,27 +1628,11 @@ def render_view_visualizar() -> None:
 
 # ==============================================================================
 
-# 6. VENTANA 2: ACTUALIZAR COMPONENTE (ESTADOS + FOTOS FIFO + HORAS)
+# 6. SECCIÓN 2: ACTUALIZAR COMPONENTE (FOTOS FIFO + ESTADO/OC + CARGA HORAS)
 
 # ==============================================================================
 
-def render_view_actualizar() -> None:
-
-    conn = get_connection()
-
-    df_all = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, equipo_principal, codigo_equipo", conn)
-
-    conn.close()
-
-    if df_all.empty:
-
-        st.info("No hay componentes registrados.")
-
-        return
-
-
-
-    df_flota = render_flota_selector(df_all)
+def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     if df_flota.empty:
 
@@ -2228,7 +1648,7 @@ def render_view_actualizar() -> None:
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("Seleccionar Componente a Actualizar:", opciones, index=idx_def)
+    sel_comp = st.selectbox("Seleccionar Componente a Actualizar:", opciones, index=idx_def, key="upd_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -2238,19 +1658,11 @@ def render_view_actualizar() -> None:
 
 
 
-    resumen_html = (
+    with st.container(border=True):
 
-        '<div class="mac-glass-card">'
+        st.markdown(get_badges_line_html(comp_row["flota"], comp_row["estado_actual"], comp_row["ciclo_actual"]), unsafe_allow_html=True)
 
-        f'<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.3rem;">{get_flota_badge_html(comp_row["flota"])}{get_status_badge_html(comp_row["estado_actual"])}<span class="badge badge-neutral">🔄 {format_vidas_label(comp_row["ciclo_actual"])}</span></div>'
-
-        f'<b>{comp_row["codigo_equipo"]}</b> — {comp_row["descripcion"]} · Equipo: <b>{comp_row["equipo_principal"]}</b> · Hrs Ciclo: <b>{float(comp_row["horas_ciclo_actual"]):,.1f}</b>'
-
-        '</div>'
-
-    )
-
-    st.markdown(resumen_html, unsafe_allow_html=True)
+        st.write(f"**{comp_row['codigo_equipo']} — {comp_row['descripcion']}** · Equipo: `{comp_row['equipo_principal']}` · Hrs Ciclo: `{float(comp_row['horas_ciclo_actual']):,.1f}`")
 
 
 
@@ -2258,23 +1670,21 @@ def render_view_actualizar() -> None:
 
     if role == "Campo-Tablet":
 
-        tab_foto, = st.tabs(["📸 Foto y Comentario (FIFO)"])
+        sub_foto, = st.tabs(["📸 Subir Foto y Comentario"])
 
-        tab_estado = None
-
-        tab_horas = None
+        sub_estado, sub_horas = None, None
 
     else:
 
-        tab_foto, tab_estado, tab_horas = st.tabs(["📸 Foto y Comentario", "🔄 Estado, OT/OC y Costos", "⏱️ Cargar Horas (Todas las Flotas)"])
+        sub_foto, sub_estado, sub_horas = st.tabs(["📸 Foto y Comentario", "🔄 Estado, OT/OC y Costos", "⏱️ Cargar Horas (Todas las Flotas)"])
 
 
 
-    with tab_foto:
+    with sub_foto:
 
-        p1, p2 = st.columns(2)
+        c_f1, c_f2 = st.columns(2)
 
-        with p1:
+        with c_f1:
 
             if comp_row["foto_1_path"] and os.path.exists(comp_row["foto_1_path"]):
 
@@ -2282,9 +1692,9 @@ def render_view_actualizar() -> None:
 
             else:
 
-                st.info("Espacio Foto #1 libre")
+                st.caption("Espacio Foto #1 libre")
 
-        with p2:
+        with c_f2:
 
             if comp_row["foto_2_path"] and os.path.exists(comp_row["foto_2_path"]):
 
@@ -2292,31 +1702,31 @@ def render_view_actualizar() -> None:
 
             else:
 
-                st.info("Espacio Foto #2 libre")
+                st.caption("Espacio Foto #2 libre")
 
 
 
-        metodo = st.radio("Origen de imagen:", ["📁 Subir desde galería/archivo", "📸 Tomar foto con cámara"], horizontal=True)
+        origen = st.radio("Capturar desde:", ["📁 Archivo / Galería", "📸 Cámara"], horizontal=True)
 
-        img_input = st.file_uploader("Seleccionar fotografía:", type=["jpg", "jpeg", "png", "webp"], key="upd_foto_up") if metodo.startswith("📁") else st.camera_input("Capturar fotografía:")
+        img_file = st.file_uploader("Seleccionar imagen:", type=["jpg", "jpeg", "png", "webp"], key="up_img") if origen.startswith("📁") else st.camera_input("Tomar foto:")
 
-        com_foto = st.text_area("Comentario técnico:", placeholder="Observación de campo o taller...", height=85, key="upd_foto_com")
+        com_txt = st.text_area("Comentario u observación:", height=80, key="up_com")
 
 
 
-        c_b1, c_b2 = st.columns(2)
+        b1, b2 = st.columns(2)
 
-        with c_b1:
+        with b1:
 
-            if st.button("Guardar Foto y Comentario", type="primary", use_container_width=True):
+            if st.button("💾 Guardar Foto (FIFO) y Comentario", type="primary", use_container_width=True):
 
-                if img_input is None:
+                if img_file is None:
 
-                    st.error("Selecciona o toma una foto primero.")
+                    st.error("Selecciona o toma una fotografía primero.")
 
                 else:
 
-                    ok, msg, _ = save_component_photo_fifo(cod_sel, img_input, com_foto, role, True)
+                    ok, msg, _ = save_component_photo_fifo(cod_sel, img_file, com_txt, role, True)
 
                     if ok:
 
@@ -2328,13 +1738,13 @@ def render_view_actualizar() -> None:
 
                         st.error(msg)
 
-        with c_b2:
+        with b2:
 
-            if st.button("Solo Guardar Comentario", type="secondary", use_container_width=True):
+            if st.button("📝 Guardar Solo Comentario", use_container_width=True):
 
-                if not com_foto.strip():
+                if not com_txt.strip():
 
-                    st.warning("Escribe un comentario.")
+                    st.warning("Escribe un comentario primero.")
 
                 else:
 
@@ -2346,7 +1756,7 @@ def render_view_actualizar() -> None:
 
                         "INSERT INTO historial_eventos (codigo_equipo, numero_ciclo, fecha_hora, usuario_rol, tipo_operacion, estado_asignado, equipo_principal, horas_componente_evento, comentario_bitacora) VALUES (?, ?, ?, ?, 'Nota / Comentario', ?, ?, ?, ?)",
 
-                        (cod_sel, comp_row["ciclo_actual"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), role, comp_row["estado_actual"], comp_row["equipo_principal"], comp_row["horas_ciclo_actual"], com_foto.strip()),
+                        (cod_sel, comp_row["ciclo_actual"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), role, comp_row["estado_actual"], comp_row["equipo_principal"], comp_row["horas_ciclo_actual"], com_txt.strip()),
 
                     )
 
@@ -2354,13 +1764,13 @@ def render_view_actualizar() -> None:
 
                     conn.close()
 
-                    st.success("Comentario guardado.")
+                    st.success("Comentario registrado en bitácora.")
 
 
 
-    if tab_estado is not None:
+    if sub_estado is not None:
 
-        with tab_estado:
+        with sub_estado:
 
             c1, c2 = st.columns(2)
 
@@ -2460,19 +1870,19 @@ def render_view_actualizar() -> None:
 
 
 
-            com_est = st.text_input("Comentario del movimiento:")
+            com_est = st.text_input("Observación del cambio de estado:")
 
             confirm_baja = True
 
             if nuevo_estado == "De Baja":
 
-                st.markdown('<div class="danger-zone">⚠️ Dar de baja retirará el componente de la operación activa.</div>', unsafe_allow_html=True)
+                st.warning("⚠️ Dar de baja retirará el componente de operación activa.")
 
                 confirm_baja = st.checkbox("Confirmo dar de baja este componente.")
 
 
 
-            if st.button("Guardar Estado y Costos", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
+            if st.button("💾 Guardar Estado y Costos", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
 
                 costo_tot = round(float(c_kit or 0.0) + float(c_rep or 0.0), 2)
 
@@ -2532,31 +1942,31 @@ def render_view_actualizar() -> None:
 
                 conn.close()
 
-                st.success(f"Componente `{cod_sel}` actualizado a **{nuevo_estado}**.")
+                st.success(f"Componente `{cod_sel}` guardado en estado **{nuevo_estado}**.")
 
                 st.rerun()
 
 
 
-    if tab_horas is not None:
+    if sub_horas is not None:
 
-        with tab_horas:
+        with sub_horas:
 
-            st.caption("Una sola carga alimenta y actualiza las horas de **todos los componentes Montados de todas las flotas**.")
+            st.write("Sube un solo archivo Excel/CSV para actualizar las horas de **todos los componentes Montados de todas las flotas**.")
 
             st.download_button(
 
-                "📥 Descargar Formato Excel para Carga de Horas",
+                "📥 Descargar Plantilla Excel de Horas",
 
                 data=generate_hours_template_excel(),
 
-                file_name="Formato_Carga_Horas_Montados.xlsx",
+                file_name="Plantilla_Carga_Horas_Montados.xlsx",
 
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
             )
 
-            archivo_hrs = st.file_uploader("Subir Excel/CSV con [Equipo_Principal o Codigo_Componente, Horas_a_Sumar o Horometro_Actual]:", type=["xlsx", "xls", "csv"], key="up_hrs_global")
+            archivo_hrs = st.file_uploader("Archivo Excel/CSV ([Equipo_Principal o Codigo_Componente, Horas_a_Sumar o Horometro_Actual]):", type=["xlsx", "xls", "csv"], key="up_hrs_file")
 
             if archivo_hrs is not None:
 
@@ -2576,7 +1986,7 @@ def render_view_actualizar() -> None:
 
                 if t_col and v_col:
 
-                    if st.button("Actualizar Horas a Todos los Montados", type="primary", use_container_width=True):
+                    if st.button("🚀 Actualizar Horas de Componentes Montados", type="primary", use_container_width=True):
 
                         upd_list = []
 
@@ -2598,19 +2008,25 @@ def render_view_actualizar() -> None:
 
                 else:
 
-                    st.error("Faltan columnas requeridas ('Equipo_Principal'/'Codigo_Componente' y 'Horas_a_Sumar'/'Horometro_Actual').")
+                    st.error("El archivo debe tener las columnas 'Equipo_Principal' (o 'Codigo_Componente') y 'Horas_a_Sumar' (o 'Horometro_Actual').")
 
 
 
-            st.markdown("---")
+            st.divider()
 
-            eq_quick = st.selectbox("O suma horas rápidas a un Equipo Principal Montado:", sorted(df_all[df_all["estado_actual"] == "Montado"]["equipo_principal"].dropna().unique().tolist()) or ["SIN_EQUIPO"])
+            c_eq, c_hr = st.columns(2)
 
-            hrs_q_txt = st.text_input("Horas operadas a sumar (+ hrs):", value="0", key="hrs_q_txt")
+            with c_eq:
+
+                eq_quick = st.selectbox("O actualizar por Equipo Principal en pantalla:", sorted(df_all[df_all["estado_actual"] == "Montado"]["equipo_principal"].dropna().unique().tolist()) or ["SIN_EQUIPO"])
+
+            with c_hr:
+
+                hrs_q_txt = st.text_input("Horas a sumar (+ hrs):", value="0", key="hrs_q_input")
 
             ok_hq, h_q_val, err_hq = validate_numeric_input(hrs_q_txt, "Horas", allow_zero=False, allow_negative=False, allow_decimal=True)
 
-            if st.button("Sumar Horas al Equipo", type="secondary", use_container_width=True):
+            if st.button("⚡ Aplicar Horas al Equipo Seleccionado", use_container_width=True):
 
                 if not ok_hq:
 
@@ -2620,7 +2036,7 @@ def render_view_actualizar() -> None:
 
                     n_upd, _ = apply_hours_to_mounted_components([{"target_type": "equipo_principal", "target_value": eq_quick, "mode": "add", "value": h_q_val}], role, f"Rápida ({eq_quick})")
 
-                    st.success(f"Se sumaron +{h_q_val} hrs a {n_upd} componente(s) de {eq_quick}.")
+                    st.success(f"Se sumaron +{h_q_val} hrs a {n_upd} componente(s) montados en {eq_quick}.")
 
 
 
@@ -2628,135 +2044,141 @@ def render_view_actualizar() -> None:
 
 # ==============================================================================
 
-# 7. VENTANA 3: AGREGAR COMPONENTE + SINCRONIZACIÓN SAP
+# 7. SECCIÓN 3: AGREGAR COMPONENTE Y SINCRONIZAR EXCEL SAP
 
 # ==============================================================================
 
-def render_view_agregar() -> None:
+def render_tab_agregar() -> None:
 
-    tab_manual, tab_sap = st.tabs(["➕ Nuevo Componente", "🔄 Cargar Lista SAP (.xlsx)"])
+    sub_alta, sub_sap = st.tabs(["➕ Agregar Componente Individual", "🔄 Importar Lista Excel SAP"])
 
 
 
-    with tab_manual:
+    with sub_alta:
 
-        c1, c2 = st.columns(2)
+        with st.container(border=True):
 
-        with c1:
+            c1, c2 = st.columns(2)
 
-            cod_m = st.text_input("Código Equipo SAP *:", placeholder="10045990")
+            with c1:
 
-            desc_m = st.text_input("Descripción del Componente *:", placeholder="MOTOR DE GIRO TRASERO")
+                cod_m = st.text_input("Código Equipo SAP *:", placeholder="10045990")
 
-            ubic_m = st.text_input("Ubicación Técnica SAP *:", value="SPCC-TOQ-MIN-495H-SHO009-GIRO")
+                desc_m = st.text_input("Descripción del Componente *:", placeholder="MOTOR DE GIRO TRASERO")
 
-            flota_prev, eq_prev = parse_ubicacion_tecnica(ubic_m)
+                ubic_m = st.text_input("Ubicación Técnica SAP *:", value="SPCC-TOQ-MIN-495H-SHO009-GIRO")
 
-            st.markdown(f'{get_flota_badge_html(flota_prev)} &nbsp; Equipo detectado: <b>{eq_prev}</b>', unsafe_allow_html=True)
+                flota_prev, eq_prev = parse_ubicacion_tecnica(ubic_m)
 
-            crit_m = st.selectbox("Criticidad ABC:", ["A", "B", "C"])
+                st.caption(f"Flota detectada: **{flota_prev}** · Equipo Principal: **{eq_prev}**")
 
-        with c2:
+                crit_m = st.selectbox("Criticidad ABC:", ["A", "B", "C"])
 
-            fab_m = st.text_input("Fabricante:", placeholder="KOMATSU / CAT")
+            with c2:
 
-            serie_m = st.text_input("N° de Serie:", placeholder="SN-884920")
+                fab_m = st.text_input("Fabricante:", placeholder="KOMATSU / CAT")
 
-            est_m = st.selectbox("Estado Inicial:", ESTADOS_COMPONENTE)
+                serie_m = st.text_input("N° de Serie:", placeholder="SN-884920")
 
-            hrs_txt = st.text_input("Horas Iniciales:", value="0")
+                est_m = st.selectbox("Estado Inicial:", ESTADOS_COMPONENTE)
 
-            costo_txt = st.text_input("Costo Inicial (USD):", value="0")
+                hrs_txt = st.text_input("Horas Iniciales:", value="0")
 
-            vidas_txt = st.text_input("Vidas Iniciales:", value="1")
+                costo_txt = st.text_input("Costo Inicial (USD):", value="0")
 
+                vidas_txt = st.text_input("Vidas Iniciales (entero >= 1):", value="1")
 
 
-        ok_h, h_val, err_h = validate_numeric_input(hrs_txt, "Horas Iniciales", allow_zero=True, allow_negative=False, allow_decimal=True)
 
-        ok_c, c_val, err_c = validate_numeric_input(costo_txt, "Costo Inicial", allow_zero=True, allow_negative=False, allow_decimal=True)
+            ok_h, h_val, err_h = validate_numeric_input(hrs_txt, "Horas Iniciales", allow_zero=True, allow_negative=False, allow_decimal=True)
 
-        ok_v, v_val, err_v = validate_numeric_input(vidas_txt, "Vidas", allow_zero=False, allow_negative=False, allow_decimal=False)
+            ok_c, c_val, err_c = validate_numeric_input(costo_txt, "Costo Inicial", allow_zero=True, allow_negative=False, allow_decimal=True)
 
-        for ok_i, err_i in ((ok_h, err_h), (ok_c, err_c), (ok_v, err_v)):
+            ok_v, v_val, err_v = validate_numeric_input(vidas_txt, "Vidas", allow_zero=False, allow_negative=False, allow_decimal=False)
 
-            if not ok_i:
+            for ok_i, err_i in ((ok_h, err_h), (ok_c, err_c), (ok_v, err_v)):
 
-                st.error(err_i)
+                if not ok_i:
 
+                    st.error(err_i)
 
 
-        if st.button("Guardar Componente", type="primary", use_container_width=True):
 
-            if not cod_m.strip() or not desc_m.strip():
+            if st.button("💾 Guardar Nuevo Componente", type="primary", use_container_width=True):
 
-                st.error("Código Equipo SAP y Descripción son obligatorios.")
+                if not cod_m.strip() or not desc_m.strip():
 
-            elif ok_h and ok_c and ok_v:
+                    st.error("El Código SAP y la Descripción son obligatorios.")
 
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                elif ok_h and ok_c and ok_v:
 
-                conn = get_connection()
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                cur = conn.cursor()
+                    conn = get_connection()
 
-                try:
+                    cur = conn.cursor()
 
-                    cur.execute(
+                    try:
 
-                        "INSERT INTO componentes (codigo_equipo, descripcion, flota, equipo_principal, ubicacion_tecnica, criticidad_abc, fabricante, serie, estado_actual, ciclo_actual, horas_acumuladas_totales, horas_ciclo_actual, gasto_acumulado_total_usd, gasto_ciclo_actual_usd, ultima_actualizacion_horas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        cur.execute(
 
-                        (cod_m.strip(), desc_m.strip().upper(), flota_prev, eq_prev, ubic_m.strip().upper(), crit_m, (fab_m.strip() or "S/I").upper(), (serie_m.strip() or "S/N").upper(), est_m, int(v_val), round(h_val, 2), round(h_val, 2), round(c_val, 2), round(c_val, 2), now_str),
+                            "INSERT INTO componentes (codigo_equipo, descripcion, flota, equipo_principal, ubicacion_tecnica, criticidad_abc, fabricante, serie, estado_actual, ciclo_actual, horas_acumuladas_totales, horas_ciclo_actual, gasto_acumulado_total_usd, gasto_ciclo_actual_usd, ultima_actualizacion_horas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 
-                    )
+                            (cod_m.strip(), desc_m.strip().upper(), flota_prev, eq_prev, ubic_m.strip().upper(), crit_m, (fab_m.strip() or "S/I").upper(), (serie_m.strip() or "S/N").upper(), est_m, int(v_val), round(h_val, 2), round(h_val, 2), round(c_val, 2), round(c_val, 2), now_str),
 
-                    conn.commit()
+                        )
 
-                    st.success(f"Componente `{cod_m.strip()}` agregado a Flota {flota_prev}.")
+                        conn.commit()
 
-                except sqlite3.IntegrityError:
+                        st.success(f"Componente `{cod_m.strip()}` registrado en Flota {flota_prev}.")
 
-                    st.error(f"El código `{cod_m.strip()}` ya existe.")
+                    except sqlite3.IntegrityError:
 
-                finally:
+                        st.error(f"El código `{cod_m.strip()}` ya existe.")
 
-                    conn.close()
+                    finally:
 
+                        conn.close()
 
 
-    with tab_sap:
 
-        st.download_button(
+    with sub_sap:
 
-            "📥 Descargar Plantilla Excel SAP ('Inventario SAP Nov.xlsx')",
+        with st.container(border=True):
 
-            data=generate_sap_template_excel(),
+            st.write("Formato requerido (`Sheet1`): `Equipo`, `Denominación`, `Indicador ABC`, `Ubicac.técnica`, `Denominación3`, `Fabricante`, `Fabr. Nº-serie`, `Válido de`, `Fin de validez`.")
 
-            file_name="Inventario SAP Nov.xlsx",
+            st.download_button(
 
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "📥 Descargar Plantilla 'Inventario SAP Nov.xlsx'",
 
-        )
+                data=generate_sap_template_excel(),
 
-        sap_file = st.file_uploader("Subir Excel de SAP:", type=["xlsx", "xls"], key="sap_up_v3")
+                file_name="Inventario SAP Nov.xlsx",
 
-        if sap_file is not None:
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
-            xl = openpyxl.load_workbook(sap_file, read_only=True)
+            )
 
-            sheet_to_use = "Sheet1" if "Sheet1" in xl.sheetnames else xl.sheetnames[0]
+            sap_file = st.file_uploader("Subir Excel de SAP:", type=["xlsx", "xls"], key="sap_up_file")
 
-            sap_file.seek(0)
+            if sap_file is not None:
 
-            df_sap_up = pd.read_excel(sap_file, sheet_name=sheet_to_use)
+                xl = openpyxl.load_workbook(sap_file, read_only=True)
 
-            st.dataframe(df_sap_up.head(10), use_container_width=True, hide_index=True)
+                sheet_to_use = "Sheet1" if "Sheet1" in xl.sheetnames else xl.sheetnames[0]
 
-            if st.button("Sincronizar Lista SAP", type="primary", use_container_width=True):
+                sap_file.seek(0)
 
-                n_new, n_upd, msg = import_sap_dataframe(df_sap_up, st.session_state.user_role)
+                df_sap_up = pd.read_excel(sap_file, sheet_name=sheet_to_use)
 
-                st.success(f"{msg} (Nuevos: {n_new} | Actualizados: {n_upd})")
+                st.dataframe(df_sap_up.head(10), use_container_width=True, hide_index=True)
+
+                if st.button("🚀 Sincronizar Lista SAP", type="primary", use_container_width=True):
+
+                    n_new, n_upd, msg = import_sap_dataframe(df_sap_up, st.session_state.user_role)
+
+                    st.success(f"{msg} (Nuevos: {n_new} | Actualizados: {n_upd})")
 
 
 
@@ -2764,25 +2186,21 @@ def render_view_agregar() -> None:
 
 # ==============================================================================
 
-# 8. VENTANA 4: ESTRATEGIA POR FLOTA Y RESPALDO
+# 8. SECCIÓN 4: ESTRATEGIA Y BACKUP
 
 # ==============================================================================
 
-def render_view_estrategia() -> None:
+def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
-    conn = get_connection()
+    if df_all.empty:
 
-    df_comp = pd.read_sql_query("SELECT * FROM componentes", conn)
-
-    conn.close()
-
-    if df_comp.empty:
-
-        st.info("No hay datos para graficar.")
+        st.info("No hay datos suficientes para graficar.")
 
         return
 
 
+
+    df_comp = df_all.copy()
 
     df_comp["costo_por_hora_usd"] = df_comp.apply(
 
@@ -2798,29 +2216,41 @@ def render_view_estrategia() -> None:
 
     with c1:
 
-        df_fl = df_comp.groupby("flota", as_index=False).agg(gasto=("gasto_acumulado_total_usd", "sum"), hrs=("horas_acumuladas_totales", "sum"))
+        with st.container(border=True):
 
-        df_fl["costo_hr"] = df_fl.apply(lambda r: round(r["gasto"] / r["hrs"], 2) if r["hrs"] > 0 else 0.0, axis=1)
+            df_fl = df_comp.groupby("flota", as_index=False).agg(gasto=("gasto_acumulado_total_usd", "sum"), hrs=("horas_acumuladas_totales", "sum"))
 
-        fig = px.bar(df_fl, x="flota", y="costo_hr", color="flota", text="costo_hr", title="Costo por Hora ($/hr) por Flota")
+            df_fl["costo_hr"] = df_fl.apply(lambda r: round(r["gasto"] / r["hrs"], 2) if r["hrs"] > 0 else 0.0, axis=1)
 
-        fig.update_traces(texttemplate="$%{text:.2f}/hr", textposition="outside")
+            fig = px.bar(df_fl, x="flota", y="costo_hr", color="flota", text="costo_hr", title="Costo por Hora ($/hr) por Flota")
 
-        fig.update_layout(height=320, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False)
+            fig.update_traces(texttemplate="$%{text:.2f}/hr", textposition="outside")
 
-        st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(height=320, showlegend=False)
+
+            st.plotly_chart(fig, use_container_width=True)
 
     with c2:
 
-        st.markdown("**🚨 Top Componentes por Costo/Hora ($/hr)**")
+        with st.container(border=True):
 
-        st.dataframe(df_comp.sort_values("costo_por_hora_usd", ascending=False).head(8)[["flota", "codigo_equipo", "descripcion", "costo_por_hora_usd", "estado_actual"]], use_container_width=True, hide_index=True)
+            st.markdown("**🚨 Top Componentes por Costo/Hora ($/hr)**")
+
+            st.dataframe(
+
+                df_comp.sort_values("costo_por_hora_usd", ascending=False).head(8)[["flota", "codigo_equipo", "descripcion", "costo_por_hora_usd", "estado_actual"]],
+
+                use_container_width=True,
+
+                hide_index=True,
+
+            )
 
 
 
-    st.markdown("---")
+    st.divider()
 
-    st.markdown("#### 🛡️ Respaldo de Base de Datos")
+    st.markdown("#### 🛡️ Respaldo Completo de Base de Datos")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
 
@@ -2830,7 +2260,7 @@ def render_view_estrategia() -> None:
 
         st.download_button(
 
-            "📥 Descargar Base Completa (.xlsx)",
+            "📥 Descargar Base Completa a Excel (.xlsx)",
 
             data=export_full_database_to_excel(),
 
@@ -2870,39 +2300,77 @@ def render_view_estrategia() -> None:
 
 # ==============================================================================
 
-# 9. PUNTO DE ENTRADA PRINCIPAL
+# 9. PUNTO DE ENTRADA PRINCIPAL (FLUJO ÚNICO Y DIRECTO)
 
 # ==============================================================================
 
 def main() -> None:
 
-    init_ui_session_state()
+    init_session_state()
 
-    inject_ios_macos_css(st.session_state.theme_mode)
+    inject_clean_css()
 
     init_db()
 
-    render_compact_header_and_nav()
+
+
+    conn = get_connection()
+
+    df_all = pd.read_sql_query("SELECT * FROM componentes ORDER BY flota, equipo_principal, codigo_equipo", conn)
+
+    conn.close()
 
 
 
-    view = st.session_state.current_view
+    df_flota = render_top_bar(df_all)
 
-    if view == "VISUALIZAR":
 
-        render_view_visualizar()
 
-    elif view == "ACTUALIZAR":
+    if st.session_state.user_role == "Campo-Tablet":
 
-        render_view_actualizar()
+        t_vis, t_upd = st.tabs(["👁️ 1. Visualizar Componentes", "✏️ 2. Actualizar y Subir Foto"])
 
-    elif view == "AGREGAR":
+        with t_vis:
 
-        render_view_agregar()
+            render_tab_visualizar(df_flota)
 
-    elif view == "ESTRATEGIA":
+        with t_upd:
 
-        render_view_estrategia()
+            render_tab_actualizar(df_all, df_flota)
+
+    else:
+
+        t_vis, t_upd, t_add, t_est = st.tabs(
+
+            [
+
+                "👁️ 1. Visualizar",
+
+                "✏️ 2. Actualizar y Fotos",
+
+                "➕ 3. Agregar y SAP",
+
+                "📊 4. Estrategia y Backup",
+
+            ]
+
+        )
+
+        with t_vis:
+
+            render_tab_visualizar(df_flota)
+
+        with t_upd:
+
+            render_tab_actualizar(df_all, df_flota)
+
+        with t_add:
+
+            render_tab_agregar()
+
+        with t_est:
+
+            render_tab_estrategia(df_all)
 
 
 
