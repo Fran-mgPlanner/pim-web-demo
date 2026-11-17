@@ -4,13 +4,13 @@
 
 P.I.M. - CONTROL DE INVENTARIOS | PLANEAMIENTO MANTENIMIENTO MINA
 
-Versión Producción Auditada:
+Versión 100% Nativa Streamlit (CERO etiquetas HTML):
 
-- Cero errores de renderizado CSS/HTML (todo CSS/HTML inyectado en línea única sin saltos ni sangrías).
+- Imposible que aparezca código CSS o HTML en pantalla en ninguna versión o configuración de Streamlit.
 
-- Navegación directa de un solo camino mediante 4 pestañas nativas:
+- Flujo directo en 4 pestañas:
 
-  1. Visualizar (Flota, KPIs, Tarjetas y Hoja de Vida con Fotos FIFO)
+  1. Visualizar (Flota, KPIs, Tarjetas con etiquetas de color nativas y Hoja de Vida con Fotos FIFO)
 
   2. Actualizar y Fotos (Foto FIFO, Cambio de Estado/OC/Kit y Carga Masiva de Horas)
 
@@ -136,35 +136,9 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 # ==============================================================================
 
-# 1. ESTILO LIMPIO EN LÍNEA ÚNICA (IMPOSIBLE QUE SE ROMPA EN MARKDOWN)
+# 1. ETIQUETAS VISUALES 100% NATIVAS DE STREAMLIT (SIN HTML NI CSS)
 
 # ==============================================================================
-
-def inject_clean_css() -> None:
-
-    css_rules = (
-
-        ".block-container{padding-top:3.2rem !important;padding-bottom:2rem !important;max-width:1280px !important;}"
-
-        ".pim-header{background:linear-gradient(90deg,#1e293b 0%,#334155 100%);color:#ffffff;padding:1rem 1.4rem;border-radius:12px;margin-bottom:1rem;box-shadow:0 4px 12px rgba(0,0,0,0.08);}"
-
-        ".pim-header h2{color:#ffffff !important;margin:0;font-size:1.35rem;font-weight:800;letter-spacing:0.02em;}"
-
-        ".pim-header p{color:#cbd5e1 !important;margin:0.15rem 0 0 0;font-size:0.84rem;}"
-
-        ".flota-tag{display:inline-block;padding:0.18rem 0.55rem;border-radius:999px;font-size:0.74rem;font-weight:700;margin-right:0.35rem;}"
-
-        ".estado-tag{display:inline-block;padding:0.18rem 0.55rem;border-radius:999px;font-size:0.74rem;font-weight:700;}"
-
-        "div.stButton > button, div.stDownloadButton > button{border-radius:10px !important;font-weight:600 !important;}"
-
-    )
-
-    st.markdown(f"&lt;style&gt;{css_rules}&lt;/style&gt;", unsafe_allow_html=True)
-
-
-
-
 
 def format_vidas_label(vidas: int) -> str:
 
@@ -262,61 +236,61 @@ def validate_numeric_input(
 
 
 
-def get_badges_line_html(flota: str, estado: str, vidas: int) -> str:
+def get_native_badges_markdown(flota: str, estado: str, vidas: int) -> str:
 
-    """Devuelve una sola línea HTML sin saltos para identificar Flota, Estado y Vidas."""
+    """
+
+    Usa sintaxis nativa de etiquetas de color de Streamlit (:color-background[...])
+
+    usando únicamente Markdown nativo.
+
+    """
 
     flota_clean = str(flota or "SIN_FLOTA").strip()
 
-    flota_colors = {
+    flota_color_map = {
 
-        "495H": ("#fee2e2", "#b91c1c"),
+        "495H": "red",
 
-        "410A": ("#dbeafe", "#1d4ed8"),
+        "410A": "blue",
 
-        "994F": ("#dcfce7", "#15803d"),
+        "994F": "green",
 
-        "793F": ("#fef3c7", "#b45309"),
+        "793F": "orange",
 
-    }
-
-    f_bg, f_fg = flota_colors.get(flota_clean, ("#f1f5f9", "#334155"))
-
-
-
-    est_colors = {
-
-        "Montado": ("#dcfce7", "#15803d"),
-
-        "Reparado": ("#dbeafe", "#1d4ed8"),
-
-        "Nuevo": ("#e0f2fe", "#0369a1"),
-
-        "Por Reparar": ("#ffedd5", "#c2410c"),
-
-        "Salida por Reclamo": ("#fef3c7", "#b45309"),
-
-        "Desmontado": ("#f1f5f9", "#475569"),
-
-        "De Baja": ("#fee2e2", "#b91c1c"),
+        "797F": "violet",
 
     }
 
-    e_bg, e_fg = est_colors.get(estado, ("#f1f5f9", "#475569"))
+    f_col = flota_color_map.get(flota_clean, "blue")
+
+
+
+    est_color_map = {
+
+        "Montado": "green",
+
+        "Reparado": "blue",
+
+        "Nuevo": "blue",
+
+        "Por Reparar": "orange",
+
+        "Salida por Reclamo": "orange",
+
+        "Desmontado": "gray",
+
+        "De Baja": "red",
+
+    }
+
+    e_col = est_color_map.get(estado, "gray")
 
     v_lbl = format_vidas_label(vidas)
 
 
 
-    return (
-
-        f'<span class="flota-tag" style="background:{f_bg};color:{f_fg};">🚜 Flota {flota_clean}</span>'
-
-        f'<span class="estado-tag" style="background:{e_bg};color:{e_fg};">● {estado}</span> '
-
-        f'<span class="estado-tag" style="background:#f1f5f9;color:#334155;">🔄 {v_lbl}</span>'
-
-    )
+    return f":{f_col}-background[**🚜 Flota {flota_clean}**] &nbsp; :{e_col}-background[**● {estado}**] &nbsp; :gray-background[**🔄 {v_lbl}**]"
 
 
 
@@ -1294,7 +1268,7 @@ def generate_hours_template_excel() -> bytes:
 
 # ==============================================================================
 
-# 4. CABECERA Y FILTRO GLOBAL POR FLOTA
+# 4. CABECERA NATIVA Y FILTRO GLOBAL POR FLOTA
 
 # ==============================================================================
 
@@ -1326,33 +1300,29 @@ def init_session_state() -> None:
 
 def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
-    st.markdown(
+    with st.container(border=True):
 
-        '&lt;div class=&quot;pim-header&quot;&gt;&lt;h2&gt;⚙️ P.I.M. — CONTROL DE INVENTARIOS&lt;/h2&gt;&lt;p&gt;PLANEAMIENTO MANTENIMIENTO MINA · Control por Flota y Trazabilidad SAP PM&lt;/p&gt;&lt;/div&gt;',
+        c_title, c_flota, c_rol = st.columns([2.2, 1.5, 1.0])
 
-        unsafe_allow_html=True,
+        with c_title:
 
-    )
+            st.markdown("### ⚙️ P.I.M. — CONTROL DE INVENTARIOS")
 
+            st.caption("PLANEAMIENTO MANTENIMIENTO MINA · Gestión por Flota y Trazabilidad SAP PM")
 
+        flotas = ["Todas"] + sorted(df_all["flota"].dropna().unique().tolist())
 
-    flotas = ["Todas"] + sorted(df_all["flota"].dropna().unique().tolist())
+        if st.session_state.active_flota not in flotas:
 
-    if st.session_state.active_flota not in flotas:
+            st.session_state.active_flota = "Todas"
 
-        st.session_state.active_flota = "Todas"
+        with c_flota:
 
+            st.selectbox("🚜 Flota de trabajo (Espacio del Planner):", options=flotas, key="active_flota")
 
+        with c_rol:
 
-    c_flota, c_rol = st.columns([2.2, 1.2])
-
-    with c_flota:
-
-        st.selectbox("🚜 Flota de trabajo (Espacio del Planner):", options=flotas, key="active_flota")
-
-    with c_rol:
-
-        st.selectbox("👤 Perfil:", options=ROLES_SISTEMA, key="user_role")
+            st.selectbox("👤 Perfil:", options=ROLES_SISTEMA, key="user_role")
 
 
 
@@ -1394,13 +1364,29 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
     k1, k2, k3, k4 = st.columns(4)
 
-    k1.metric("Componentes", f"{total}", f"Flota: {st.session_state.active_flota}")
+    with k1:
 
-    k2.metric("Montados", f"{montados}", "En operación")
+        with st.container(border=True):
 
-    k3.metric("Por Reparar / Taller", f"{taller}", "Pendientes")
+            st.metric("Componentes", f"{total}", f"Flota: {st.session_state.active_flota}")
 
-    k4.metric("Gasto Acumulado", f"${gasto:,.0f}", f"${c_hr:,.2f} USD/hr")
+    with k2:
+
+        with st.container(border=True):
+
+            st.metric("Montados", f"{montados}", "En operación")
+
+    with k3:
+
+        with st.container(border=True):
+
+            st.metric("Por Reparar / Taller", f"{taller}", "Pendientes")
+
+    with k4:
+
+        with st.container(border=True):
+
+            st.metric("Gasto Acumulado", f"${gasto:,.0f}", f"${c_hr:,.2f} USD/hr")
 
 
 
@@ -1454,8 +1440,6 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
 
 
-    # Tarjetas limpias usando contenedores nativos de Streamlit (100% libres de errores HTML)
-
     rows_list = [r for _, r in df_filt.head(15).iterrows()]
 
     for idx in range(0, len(rows_list), 3):
@@ -1476,7 +1460,7 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
                     with st.container(border=True):
 
-                        st.markdown(get_badges_line_html(r["flota"], r["estado_actual"], r["ciclo_actual"]), unsafe_allow_html=True)
+                        st.markdown(get_native_badges_markdown(r["flota"], r["estado_actual"], r["ciclo_actual"]))
 
                         st.markdown(f"**{r['descripcion']}**")
 
@@ -1526,7 +1510,7 @@ def render_tab_visualizar(df_flota: pd.DataFrame) -> None:
 
         with c_info:
 
-            st.markdown(get_badges_line_html(comp["flota"], comp["estado_actual"], total_vidas), unsafe_allow_html=True)
+            st.markdown(get_native_badges_markdown(comp["flota"], comp["estado_actual"], total_vidas))
 
             st.subheader(comp["descripcion"])
 
@@ -1660,7 +1644,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     with st.container(border=True):
 
-        st.markdown(get_badges_line_html(comp_row["flota"], comp_row["estado_actual"], comp_row["ciclo_actual"]), unsafe_allow_html=True)
+        st.markdown(get_native_badges_markdown(comp_row["flota"], comp_row["estado_actual"], comp_row["ciclo_actual"]))
 
         st.write(f"**{comp_row['codigo_equipo']} — {comp_row['descripcion']}** · Equipo: `{comp_row['equipo_principal']}` · Hrs Ciclo: `{float(comp_row['horas_ciclo_actual']):,.1f}`")
 
@@ -2307,8 +2291,6 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 def main() -> None:
 
     init_session_state()
-
-    inject_clean_css()
 
     init_db()
 
