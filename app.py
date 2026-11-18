@@ -32,21 +32,31 @@ Arquitectura por Pantallas Independientes (Scream Navigation - 100% Nativa Strea
 
 
 
-3. PANTALLAS INDEPENDIENTES CON BOTÓN "⬅️ Volver a Inicio":
+3. PANTALLAS INDEPENDIENTES CON AISLAMIENTO ESTRICTO POR FLOTA Y BOTÓN "⬅️ Volver a Inicio":
 
    - `BUSCAR`:
 
      * No carga resultados automáticamente al entrar.
 
-     * El usuario selecciona los filtros y presiona el botón `"🔍 Buscar Componentes"`.
+     * El usuario selecciona los filtros de su flota y presiona `"🔍 Buscar Componentes"`.
 
      * Muestra los resultados primero en formato **Lista (Tabla)** por defecto (con opción a Tejas).
 
-   - `ACTUALIZAR`: Fotos FIFO (máximo 2 fotos por ciclo), Estado/Ubicación SAP/Comentarios y Corrida de Horas.
+   - `ACTUALIZAR / EDITAR`:
 
-   - `AGREGAR`: Alta guiada en cascada e importación de Excel SAP (`Sheet1`).
+     * Incluye barra de filtros por **Modelo**, **Equipo Principal**, **Estado** y **Búsqueda por Código SAP / Descripción**
 
-   - `ESTRATEGIA`: Analítica por flota/modelo y respaldo `.xlsx` / `.db`.
+       restringida exclusivamente a la flota activa del Planner, para encontrar y seleccionar fácilmente el componente a modificar.
+
+   - `AGREGAR`: Alta guiada en cascada e importación de Excel SAP (`Sheet1`) para la(s) flota(s) con permiso.
+
+   - `ESTRATEGIA`:
+
+     * Aislada estrictamente a la flota activa permitida al Planner (el Planner de PALAS solo ve equipos de PALAS, etc.).
+
+     * Gráfico y análisis agrupados por **Equipo Principal** (ej. Pala 4, Pala 8, Pala 9...) y NO por modelo.
+
+     * Incluye selector de **Equipo Principal** para filtrar y ver en la tabla los componentes de ese equipo específico.
 
    - `USUARIOS` (Solo Admin): Ingresar Usuario y Editar Usuarios con casillas marcables/desmarcables por flota.
 
@@ -130,9 +140,31 @@ CATALOGO_FLOTAS: Dict[str, Dict[str, List[str]]] = {
 
     "PALAS": {
 
-        "4100A": ["PALA4 (SHO004 / PATQ4)", "PALA5 (SHO005 / PATQ5)", "PALA6 (SHO006 / PATQ6)"],
+        "4100A": [
 
-        "495HR": ["PALA7 (SHO007 / PATQ7)", "PALA8 (SHO008 / PATQ8)", "PALA9 (SHO009 / PATQ9)"],
+            "PALA1 (SHO001 / PATQ1)",
+
+            "PALA2 (SHO002 / PATQ2)",
+
+            "PALA3 (SHO003 / PATQ3)",
+
+            "PALA4 (SHO004 / PATQ4)",
+
+            "PALA5 (SHO005 / PATQ5)",
+
+            "PALA6 (SHO006 / PATQ6)",
+
+        ],
+
+        "495HR": [
+
+            "PALA7 (SHO007 / PATQ7)",
+
+            "PALA8 (SHO008 / PATQ8)",
+
+            "PALA9 (SHO009 / PATQ9)",
+
+        ],
 
         "4100XPC": ["PALA10 (SHO010 / PATQ10)", "PALA11 (SHO011 / PATQ11)"],
 
@@ -273,8 +305,6 @@ def normalize_role_name(raw_rol: str) -> str:
 
 
 def parse_assigned_flotas(flota_str: str, rol: str) -> List[str]:
-
-    """Convierte la cadena de flotas asignadas en lista de flotas válidas; si está vacía, retorna []."""
 
     if normalize_role_name(rol) == "Admin":
 
@@ -529,8 +559,6 @@ def validate_numeric_input(
 
 
 def get_native_badges_markdown(flota: str, modelo: str, estado: str, vidas: int) -> str:
-
-    """Etiquetas formales de Flota, Modelo, Estado y Vidas (sin ícono de tractor)."""
 
     flota_clean = str(flota or "PALAS").upper().strip()
 
@@ -1958,7 +1986,7 @@ def build_cycle_summary_dataframe(df_eventos_all: pd.DataFrame, comp: pd.Series)
 
 
 
-def export_full_database_to_excel() -> bytes:
+def export_full_database_to_excel(allowed_flotas: Optional[List[str]] = None) -> bytes:
 
     conn = get_connection()
 
@@ -1969,6 +1997,16 @@ def export_full_database_to_excel() -> bytes:
     df_logs = pd.read_sql_query("SELECT * FROM log_carga_horas ORDER BY id_carga DESC", conn)
 
     conn.close()
+
+
+
+    if allowed_flotas is not None:
+
+        df_comp = df_comp[df_comp["flota"].isin(allowed_flotas)]
+
+        cods_permitidos = set(df_comp["codigo_equipo"].tolist())
+
+        df_hist = df_hist[df_hist["codigo_equipo"].isin(cods_permitidos)]
 
 
 
@@ -2104,7 +2142,7 @@ def init_session_state() -> None:
 
         "active_flota": "PALAS",
 
-        "active_screen": "INICIO",  # INICIO | BUSCAR | ACTUALIZAR | AGREGAR | ESTRATEGIA | USUARIOS
+        "active_screen": "INICIO",
 
         "selected_component": None,
 
@@ -2129,8 +2167,6 @@ def init_session_state() -> None:
 
 
 def render_login_screen() -> None:
-
-    """Ventana principal de inicio de sesión (distingue mayúsculas y minúsculas)."""
 
     st.write("")
 
@@ -2202,8 +2238,6 @@ def render_login_screen() -> None:
 
 def render_user_top_strip() -> None:
 
-    """Barra superior minimalista con identificación del usuario y cierre de sesión."""
-
     role = st.session_state.user_role
 
     flotas_u = st.session_state.user_flotas_list
@@ -2226,7 +2260,7 @@ def render_user_top_strip() -> None:
 
             st.markdown(f"**Usuario: {st.session_state.auth_username}** (`{role}`)")
 
-            st.caption(f"Flota(s) asignada(s): `{flota_txt}` · Activa: **{st.session_state.active_flota}**")
+            st.caption(f"Flota(s) con permiso: `{flota_txt}` · Flota activa: **{st.session_state.active_flota}**")
 
         with c_out:
 
@@ -2247,8 +2281,6 @@ def render_user_top_strip() -> None:
 
 
 def render_subscreen_header(titulo_pantalla: str) -> None:
-
-    """Encabezado de cada pantalla secundaria con botón directo para Volver a Inicio."""
 
     c_back, c_title = st.columns([1.0, 3.8])
 
@@ -2272,22 +2304,6 @@ def render_subscreen_header(titulo_pantalla: str) -> None:
 
 def render_screen_inicio(df_all: pd.DataFrame) -> None:
 
-    """
-
-    PANTALLA DE INICIO (SCREAM PRINCIPAL DESPUÉS DEL LOGIN):
-
-    1. Arriba: Botones de Flota para seleccionar UNA flota (según permisos del usuario).
-
-    2. Medio: Resumen visual en formato Tejas de la flota seleccionada:
-
-       Total Flota | Montados | Reparados | Por Reparar | Reparación Externa | Baja
-
-    3. Abajo: Botones que llevan a cada pantalla independiente:
-
-       Buscar | Actualizar / Editar | Agregar | Estrategia (+ Usuarios si es Admin).
-
-    """
-
     role = st.session_state.user_role
 
     flotas_permitidas = FLOTAS_MACRO if role == "Admin" else st.session_state.user_flotas_list
@@ -2308,7 +2324,7 @@ def render_screen_inicio(df_all: pd.DataFrame) -> None:
 
 
 
-    # 1. SELECCIÓN DE FLOTA (UNA SOLA FLOTA ACTIVA)
+    # 1. SELECCIÓN DE FLOTA (UNA SOLA FLOTA ACTIVA SEGÚN PERMISOS)
 
     with st.container(border=True):
 
@@ -2316,7 +2332,7 @@ def render_screen_inicio(df_all: pd.DataFrame) -> None:
 
             st.markdown(f"#### 1. Flota Asignada: **{flotas_permitidas[0]}**")
 
-            st.caption("Su perfil tiene asignada exclusivamente esta flota.")
+            st.caption("Su perfil opera exclusivamente sobre esta flota.")
 
         else:
 
@@ -2346,11 +2362,11 @@ def render_screen_inicio(df_all: pd.DataFrame) -> None:
 
                         st.session_state.search_triggered = False
 
+                        st.session_state.selected_component = None
+
                         st.rerun()
 
 
-
-    # Filtrar datos de la flota seleccionada
 
     flota_actual = st.session_state.active_flota
 
@@ -2420,7 +2436,7 @@ def render_screen_inicio(df_all: pd.DataFrame) -> None:
 
 
 
-    # 3. BOTONES DE NAVEGACIÓN A PANTALLAS INDEPENDIENTES (ABAJO)
+    # 3. BOTONES DE NAVEGACIÓN A PANTALLAS INDEPENDIENTES
 
     with st.container(border=True):
 
@@ -2470,7 +2486,7 @@ def render_screen_inicio(df_all: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
+def render_screen_buscar(df_flota: pd.DataFrame) -> None:
 
     render_subscreen_header("🔍 Buscar Componentes")
 
@@ -2544,8 +2560,6 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-    # No cargar nada hasta que el usuario seleccione sus filtros y presione "Buscar Componentes"
-
     if not st.session_state.search_triggered:
 
         st.info("Seleccione los criterios de búsqueda arriba y presione **🔍 Buscar Componentes** para cargar la lista.")
@@ -2601,8 +2615,6 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
     conn = get_connection()
-
-    # FORMATO LISTA PRIMERO POR DEFECTO
 
     if st.session_state.vista_inventario == "Lista":
 
@@ -2860,13 +2872,13 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-    df_reemplazos = df_all[
+    # Reemplazos compatibles buscados estrictamente dentro de la misma flota permitida
 
-        (df_all["flota"] == comp["flota"])
+    df_reemplazos = df_flota[
 
-        & (df_all["modelo"] == comp["modelo"])
+        (df_flota["modelo"] == comp["modelo"])
 
-        & (df_all["codigo_equipo"] != cod_sel)
+        & (df_flota["codigo_equipo"] != cod_sel)
 
     ]
 
@@ -3002,11 +3014,11 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-# 8. PANTALLA ACTUALIZAR / EDITAR (CON PERMISOS CAMPO VS PLANNER/ADMIN)
+# 8. PANTALLA ACTUALIZAR / EDITAR (CON FILTROS RÁPIDOS DE SELECCIÓN POR FLOTA)
 
 # ==============================================================================
 
-def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
+def render_screen_actualizar(df_flota: pd.DataFrame) -> None:
 
     render_subscreen_header("✏️ Actualizar / Editar Componente")
 
@@ -3014,31 +3026,113 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
     if df_flota.empty:
 
-        st.warning("No hay componentes en esta flota.")
+        st.warning(f"No hay componentes registrados en la flota **{st.session_state.active_flota}**.")
 
         return
 
 
 
-    opciones = [
+    # Barra de filtros para encontrar fácilmente el componente a modificar dentro de la flota activa
 
-        f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} · Mod. {r['modelo']} · {r['equipo_principal']}) [{r['estado_actual']}]"
+    with st.container(border=True):
 
-        for _, r in df_flota.iterrows()
+        st.markdown("##### Filtrar para seleccionar el componente a modificar")
 
-    ]
+        uf1, uf2, uf3, uf4 = st.columns([1.1, 1.3, 1.1, 1.8])
 
-    cod_list = df_flota["codigo_equipo"].tolist()
+        with uf1:
 
-    idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
+            mod_upd_list = ["Todos"] + sorted(df_flota["modelo"].dropna().unique().tolist())
 
-    sel_comp = st.selectbox("Seleccionar Componente:", opciones, index=idx_def, key="upd_sel_comp")
+            f_mod_upd = st.selectbox("Modelo:", mod_upd_list, key="upd_filter_mod")
 
-    cod_sel = sel_comp.split(" | ")[0].strip()
+        with uf2:
 
-    st.session_state.selected_component = cod_sel
+            df_sub_upd = df_flota if f_mod_upd == "Todos" else df_flota[df_flota["modelo"] == f_mod_upd]
 
-    comp_row = df_flota[df_flota["codigo_equipo"] == cod_sel].iloc[0]
+            eq_upd_list = ["Todos"] + sorted(df_sub_upd["equipo_principal"].dropna().unique().tolist())
+
+            f_eq_upd = st.selectbox("Equipo Principal:", eq_upd_list, key="upd_filter_eq")
+
+        with uf3:
+
+            f_est_upd = st.selectbox("Estado:", ["Todos"] + ESTADOS_COMPONENTE, key="upd_filter_est")
+
+        with uf4:
+
+            f_q_upd = st.text_input("Buscar Código SAP, serie o descripción:", key="upd_filter_q")
+
+
+
+        df_upd_filtered = df_flota.copy()
+
+        if f_mod_upd != "Todos":
+
+            df_upd_filtered = df_upd_filtered[df_upd_filtered["modelo"] == f_mod_upd]
+
+        if f_eq_upd != "Todos":
+
+            df_upd_filtered = df_upd_filtered[df_upd_filtered["equipo_principal"] == f_eq_upd]
+
+        if f_est_upd != "Todos":
+
+            df_upd_filtered = df_upd_filtered[df_upd_filtered["estado_actual"] == f_est_upd]
+
+        if f_q_upd.strip():
+
+            ql_u = f_q_upd.strip().lower()
+
+            df_upd_filtered = df_upd_filtered[
+
+                df_upd_filtered["codigo_equipo"].astype(str).str.lower().str.contains(ql_u, na=False)
+
+                | df_upd_filtered["descripcion"].astype(str).str.lower().str.contains(ql_u, na=False)
+
+                | df_upd_filtered["serie"].astype(str).str.lower().str.contains(ql_u, na=False)
+
+                | df_upd_filtered["equipo_principal"].astype(str).str.lower().str.contains(ql_u, na=False)
+
+            ]
+
+
+
+        if df_upd_filtered.empty:
+
+            st.warning("Ningún componente de esta flota coincide con los filtros ingresados.")
+
+            return
+
+
+
+        opciones = [
+
+            f"{r['codigo_equipo']} | {r['descripcion']} ({r['flota']} · Mod. {r['modelo']} · {r['equipo_principal']}) [{r['estado_actual']}]"
+
+            for _, r in df_upd_filtered.iterrows()
+
+        ]
+
+        cod_list = df_upd_filtered["codigo_equipo"].tolist()
+
+        idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
+
+        sel_comp = st.selectbox(
+
+            f"Componente a modificar ({len(cod_list)} encontrados en {st.session_state.active_flota}):",
+
+            opciones,
+
+            index=idx_def,
+
+            key="upd_sel_comp",
+
+        )
+
+        cod_sel = sel_comp.split(" | ")[0].strip()
+
+        st.session_state.selected_component = cod_sel
+
+        comp_row = df_upd_filtered[df_upd_filtered["codigo_equipo"] == cod_sel].iloc[0]
 
 
 
@@ -3604,7 +3698,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                 with c_eq:
 
-                    eq_quick = st.selectbox("Filtrar Equipo Montado:", ["Todos"] + sorted(df_montados_act["equipo_principal"].dropna().unique().tolist()))
+                    eq_quick = st.selectbox("Filtrar Equipo Montado de la Flota:", ["Todos"] + sorted(df_montados_act["equipo_principal"].dropna().unique().tolist()))
 
                 with c_hr:
 
@@ -3960,17 +4054,33 @@ def render_screen_agregar() -> None:
 
 # ==============================================================================
 
-# 10. PANTALLA ESTRATEGIA Y RESPALDO
+# 10. PANTALLA ESTRATEGIA POR EQUIPO DE LA FLOTA Y RESPALDO
 
 # ==============================================================================
 
 def render_screen_estrategia(df_flota: pd.DataFrame) -> None:
 
-    render_subscreen_header("📊 Estrategia y Respaldo")
+    render_subscreen_header("📊 Estrategia por Equipo")
 
 
 
-    if st.session_state.user_role == "Campo":
+    role = st.session_state.user_role
+
+    if role == "Campo":
+
+        st.warning(MENSAJE_SIN_PERMISO)
+
+        return
+
+
+
+    flota_activa = st.session_state.active_flota
+
+    flotas_permitidas = FLOTAS_MACRO if role == "Admin" else st.session_state.user_flotas_list
+
+
+
+    if flota_activa not in flotas_permitidas:
 
         st.warning(MENSAJE_SIN_PERMISO)
 
@@ -3980,57 +4090,183 @@ def render_screen_estrategia(df_flota: pd.DataFrame) -> None:
 
     with st.container(border=True):
 
-        st.markdown("#### Estrategia de Componentes y Respaldo General")
+        st.markdown(f"#### Estrategia de Componentes por Equipo — Flota: **{flota_activa}**")
 
-        if not df_flota.empty:
+        if df_flota.empty:
+
+            st.info(f"No hay componentes registrados en la flota **{flota_activa}**.")
+
+        else:
 
             df_comp = df_flota.copy()
 
             df_comp["costo_por_hora_usd"] = df_comp.apply(
 
-                lambda r: round(r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"], 2) if r["horas_acumuladas_totales"] > 0 else 0.0,
+                lambda r: round(r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"], 2)
+
+                if r["horas_acumuladas_totales"] > 0
+
+                else 0.0,
 
                 axis=1,
 
             )
 
+
+
+            # Obtener lista de equipos de esta flota (catálogo de la flota + equipos registrados en BD)
+
+            equipos_bd = sorted(df_comp["equipo_principal"].dropna().unique().tolist())
+
+            equipos_catalogo = [
+
+                eq_item
+
+                for lista_eq in CATALOGO_FLOTAS.get(flota_activa, {}).values()
+
+                for eq_item in lista_eq
+
+            ]
+
+            todos_equipos_flota = sorted(set(equipos_bd + equipos_catalogo))
+
+
+
+            sel_eq_est = st.selectbox(
+
+                f"Seleccionar Equipo de la Flota {flota_activa} para ver sus componentes en la tabla:",
+
+                options=["Todos los equipos de " + flota_activa] + todos_equipos_flota,
+
+                key="est_sel_equipo",
+
+            )
+
+
+
+            df_tabla_eq = (
+
+                df_comp
+
+                if sel_eq_est.startswith("Todos")
+
+                else df_comp[df_comp["equipo_principal"] == sel_eq_est]
+
+            )
+
+
+
             c1, c2 = st.columns(2)
 
             with c1:
 
-                df_fl = df_comp.groupby(["flota", "modelo"], as_index=False).agg(
+                # Gráfico agrupado por EQUIPO PRINCIPAL (ej. Pala 4, Pala 8, Pala 9...) y NO por modelo
+
+                df_eq_chart = df_comp.groupby("equipo_principal", as_index=False).agg(
 
                     gasto=("gasto_acumulado_total_usd", "sum"),
 
                     hrs=("horas_acumuladas_totales", "sum"),
 
+                    componentes=("codigo_equipo", "count"),
+
                 )
 
-                df_fl["costo_hr"] = df_fl.apply(lambda r: round(r["gasto"] / r["hrs"], 2) if r["hrs"] > 0 else 0.0, axis=1)
+                df_eq_chart["costo_hr"] = df_eq_chart.apply(
 
-                fig = px.bar(df_fl, x="modelo", y="costo_hr", color="flota", text="costo_hr", title="Costo/Hora ($/hr) por Modelo")
+                    lambda r: round(r["gasto"] / r["hrs"], 2) if r["hrs"] > 0 else 0.0,
+
+                    axis=1,
+
+                )
+
+                fig = px.bar(
+
+                    df_eq_chart,
+
+                    x="equipo_principal",
+
+                    y="costo_hr",
+
+                    color="equipo_principal",
+
+                    text="costo_hr",
+
+                    title=f"Costo/Hora ($/hr) por Equipo — Flota {flota_activa}",
+
+                    labels={"equipo_principal": "Equipo", "costo_hr": "Costo/Hr ($/hr)"},
+
+                )
 
                 fig.update_traces(texttemplate="$%{text:.2f}/hr", textposition="outside")
 
-                fig.update_layout(height=300)
+                fig.update_layout(height=320, showlegend=False)
 
                 st.plotly_chart(fig, use_container_width=True)
 
+
+
             with c2:
 
-                st.dataframe(
+                st.markdown(f"**Componentes del Equipo Seleccionado ({len(df_tabla_eq)} registros)**")
 
-                    df_comp.sort_values("costo_por_hora_usd", ascending=False).head(8)[
+                if df_tabla_eq.empty:
 
-                        ["flota", "modelo", "codigo_equipo", "descripcion", "costo_por_hora_usd", "estado_actual"]
+                    st.info(f"El equipo **{sel_eq_est}** aún no tiene componentes registrados.")
 
-                    ],
+                else:
 
-                    use_container_width=True,
+                    st.dataframe(
 
-                    hide_index=True,
+                        df_tabla_eq.sort_values("costo_por_hora_usd", ascending=False)[
 
-                )
+                            [
+
+                                "equipo_principal",
+
+                                "codigo_equipo",
+
+                                "descripcion",
+
+                                "modelo",
+
+                                "estado_actual",
+
+                                "ciclo_actual",
+
+                                "horas_ciclo_actual",
+
+                                "costo_por_hora_usd",
+
+                            ]
+
+                        ],
+
+                        use_container_width=True,
+
+                        hide_index=True,
+
+                        column_config={
+
+                            "equipo_principal": "Equipo",
+
+                            "codigo_equipo": "Código SAP",
+
+                            "descripcion": "Componente",
+
+                            "modelo": "Modelo",
+
+                            "estado_actual": "Estado",
+
+                            "ciclo_actual": "Vidas",
+
+                            "horas_ciclo_actual": st.column_config.NumberColumn("Hrs Ciclo", format="%.0f hrs"),
+
+                            "costo_por_hora_usd": st.column_config.NumberColumn("$/hr", format="$%.2f/hr"),
+
+                        },
+
+                    )
 
 
 
@@ -4038,17 +4274,19 @@ def render_screen_estrategia(df_flota: pd.DataFrame) -> None:
 
         ts = datetime.now().strftime("%Y%m%d_%H%M")
 
+        allowed_export = None if role == "Admin" else flotas_permitidas
+
         b1, b2 = st.columns(2)
 
         with b1:
 
             st.download_button(
 
-                "Descargar Base Completa a Excel (.xlsx)",
+                f"Descargar Respaldo Excel ({'Todas las Flotas' if role == 'Admin' else ', '.join(flotas_permitidas)}) (.xlsx)",
 
-                data=export_full_database_to_excel(),
+                data=export_full_database_to_excel(allowed_export),
 
-                file_name=f"PIM_Backup_{ts}.xlsx",
+                file_name=f"PIM_Backup_{flota_activa}_{ts}.xlsx",
 
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
@@ -4060,13 +4298,13 @@ def render_screen_estrategia(df_flota: pd.DataFrame) -> None:
 
         with b2:
 
-            if os.path.exists(DB_PATH):
+            if role == "Admin" and os.path.exists(DB_PATH):
 
                 with open(DB_PATH, "rb") as f_db:
 
                     st.download_button(
 
-                        "Descargar Archivo SQLite (.db)",
+                        "Descargar Archivo SQLite Completo (.db)",
 
                         data=f_db.read(),
 
@@ -4394,7 +4632,17 @@ def main() -> None:
 
 
 
-    df_flota = df_all[df_all["flota"] == st.session_state.active_flota] if flotas_permitidas else df_all.iloc[0:0]
+    # Aislamiento estricto: df_flota contiene únicamente los componentes de la flota activa permitida al usuario
+
+    df_flota = (
+
+        df_all[df_all["flota"] == st.session_state.active_flota]
+
+        if (flotas_permitidas and st.session_state.active_flota in flotas_permitidas)
+
+        else df_all.iloc[0:0]
+
+    )
 
     scr = st.session_state.active_screen
 
@@ -4406,11 +4654,11 @@ def main() -> None:
 
     elif scr == "BUSCAR":
 
-        render_screen_buscar(df_all, df_flota)
+        render_screen_buscar(df_flota)
 
     elif scr == "ACTUALIZAR":
 
-        render_screen_actualizar(df_all, df_flota)
+        render_screen_actualizar(df_flota)
 
     elif scr == "AGREGAR":
 
