@@ -4,25 +4,31 @@
 
 P.I.M. - CONTROL DE INVENTARIOS | PLANEAMIENTO MANTENIMIENTO MINA
 
-Arquitectura CMMS / EAM Minimalista y Sobria (100% Componentes Nativos de Streamlit):
+Arquitectura CMMS / EAM Minimalista, Sobria y Formal (100% Componentes Nativos de Streamlit):
 
-- Pantalla Principal de Login con validación exacta de mayúsculas y minúsculas (Case-Sensitive):
+- Sin ícono de tractor en etiquetas de Flota.
 
-  * Usuario Admin inicial por defecto: `Admin1` | Contraseña: `Mendoza` | Rol: `Administrador`.
+- Login principal Case-Sensitive: Usuario por defecto `Admin1`, Contraseña `Mendoza`, Rol `Admin`.
 
-- Control de Acceso por Usuario Registrado:
+- Roles y Permisos Estrictos:
 
-  * Cada usuario tiene asignado su Rol (`Administrador`, `Planner`, `Campo-Tablet`) y su Flota asignada
+  1. `Admin`: Acceso total a todas las flotas (`PALAS`, `PERFOS`, `VOLQUETES`, `AUXILIARES`) y a la pantalla `Usuarios`.
 
-    (`Todas`, `PALAS`, `PERFOS`, `VOLQUETES`, `AUXILIARES`).
+  2. `Planner`: Puede utilizar todas las funciones (Buscar, Actualizar/Editar, Agregar, Estrategia) únicamente
 
-- Navegación Principal Sobria y Elegante por Botones:
+     sobre la(s) flota(s) que le asignó el Admin.
 
-  * Botones generales: `🔍 Buscar` | `✏️ Actualizar / Editar` | `➕ Agregar` | `📊 Estrategia`
+  3. `Campo`: Puede Buscar, Visualizar y en Actualizar/Editar únicamente subir/actualizar las 2 fotos FIFO.
 
-  * Botón exclusivo para Administradores: `👥 Usuarios` (con sub-ventanas para **Ingresar Usuarios**
+     Si intenta realizar cualquier otra acción (editar estados/costos, correr horas, agregar componentes o ver estrategia),
 
-    y **Editar Usuarios**: cambios de nombre, contraseña, rol y flota asignada).
+     el sistema muestra el aviso: "Usted no tiene permiso, contáctese con un Admin."
+
+- Gestión de Usuarios (`Usuarios` -> `Ingresar Usuario` | `Editar Usuarios`):
+
+  * Campos: Usuario, Contraseña, Rol (`Admin`, `Planner`, `Campo`) y Flota (selección múltiple mediante casillas
+
+    marcables/desmarcables para asignar una o más flotas a cada usuario y botón Actualizar).
 
 """
 
@@ -178,7 +184,11 @@ ESTADOS_COMPONENTE = [
 
 
 
-ROLES_SISTEMA = ["Administrador", "Planner", "Campo-Tablet"]
+ROLES_SISTEMA = ["Admin", "Planner", "Campo"]
+
+
+
+MENSAJE_SIN_PERMISO = "Usted no tiene permiso, contáctese con un Admin."
 
 
 
@@ -221,6 +231,50 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 # 1. REGLAS DE CLASIFICACIÓN SAP: FLOTA (4 FIJAS), MODELO, EQUIPO Y ESTADO
 
 # ==============================================================================
+
+def normalize_role_name(raw_rol: str) -> str:
+
+    r = str(raw_rol or "").strip()
+
+    if r in ("Administrador", "Admin"):
+
+        return "Admin"
+
+    if r in ("Campo-Tablet", "Campo"):
+
+        return "Campo"
+
+    return "Planner"
+
+
+
+
+
+def parse_assigned_flotas(flota_str: str, rol: str) -> List[str]:
+
+    """Convierte la cadena de flotas asignadas (ej. 'PALAS,PERFOS') en lista de flotas válidas; si está vacía, retorna []."""
+
+    if normalize_role_name(rol) == "Admin":
+
+        return list(FLOTAS_MACRO)
+
+    raw = str(flota_str or "").upper().strip()
+
+    if raw == "TODAS":
+
+        return list(FLOTAS_MACRO)
+
+    if not raw:
+
+        return []
+
+    parts = [p.strip() for p in raw.split(",") if p.strip() in FLOTAS_MACRO]
+
+    return parts
+
+
+
+
 
 def normalize_model_name(raw_model: str) -> str:
 
@@ -348,7 +402,7 @@ def parse_ubicacion_tecnica(ubic_tec: str) -> Tuple[str, str, str, str]:
 
 # ==============================================================================
 
-# 2. UTILIDADES DE VALIDACIÓN NUMÉRICA, ETIQUETAS NATIVAS Y VIDAS
+# 2. UTILIDADES DE VALIDACIÓN NUMÉRICA, ETIQUETAS FORMALES Y VIDAS
 
 # ==============================================================================
 
@@ -450,6 +504,8 @@ def validate_numeric_input(
 
 def get_native_badges_markdown(flota: str, modelo: str, estado: str, vidas: int) -> str:
 
+    """Etiquetas formales de Flota, Modelo, Estado y Vidas (sin ícono de tractor)."""
+
     flota_clean = str(flota or "PALAS").upper().strip()
 
     modelo_clean = str(modelo or "4100A").upper().strip()
@@ -498,13 +554,13 @@ def get_native_badges_markdown(flota: str, modelo: str, estado: str, vidas: int)
 
     return (
 
-        f":{f_col}-background[**🚜 {flota_clean}**] &nbsp; "
+        f":{f_col}-background[**Flota: {flota_clean}**] &nbsp; "
 
-        f":violet-background[**⚙️ Mod. {modelo_clean}**] &nbsp; "
+        f":violet-background[**Mod. {modelo_clean}**] &nbsp; "
 
         f":{e_col}-background[**● {estado}**] &nbsp; "
 
-        f":gray-background[**🔄 {v_lbl}**]"
+        f":gray-background[**{v_lbl}**]"
 
     )
 
@@ -548,8 +604,6 @@ def init_db() -> None:
 
 
 
-    # 1. Tabla de Usuarios con validación estricta de mayúsculas/minúsculas
-
     cur.execute(
 
         """
@@ -564,7 +618,7 @@ def init_db() -> None:
 
             rol TEXT NOT NULL DEFAULT 'Planner',
 
-            flota_asignada TEXT NOT NULL DEFAULT 'Todas',
+            flota_asignada TEXT NOT NULL DEFAULT 'PALAS',
 
             fecha_creacion TEXT
 
@@ -575,8 +629,6 @@ def init_db() -> None:
     )
 
 
-
-    # Asegurar que exista siempre el usuario Admin1 con contraseña Mendoza (Case-Sensitive)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -594,13 +646,43 @@ def init_db() -> None:
 
             """,
 
-            ("Admin1", "Admin1 (Mendoza)", "Mendoza", "Administrador", "Todas", now_str),
+            ("Admin1", "Admin1", "Mendoza", "Admin", "PALAS,PERFOS,VOLQUETES,AUXILIARES", now_str),
 
         )
 
 
 
-    # 2. Tabla de Componentes
+    # Normalizar roles existentes (ej. 'Administrador' -> 'Admin', 'Campo-Tablet' -> 'Campo')
+
+    cur.execute("SELECT username, rol, flota_asignada FROM usuarios")
+
+    for u_r in cur.fetchall():
+
+        r_norm = normalize_role_name(u_r["rol"])
+
+        f_asig = str(u_r["flota_asignada"] or "")
+
+        if r_norm == "Admin" or f_asig.upper() == "TODAS":
+
+            f_norm = ",".join(FLOTAS_MACRO)
+
+        else:
+
+            valid_f = [x.strip() for x in f_asig.upper().split(",") if x.strip() in FLOTAS_MACRO]
+
+            f_norm = ",".join(valid_f)
+
+        if r_norm != u_r["rol"] or f_norm != f_asig:
+
+            cur.execute(
+
+                "UPDATE usuarios SET rol = ?, flota_asignada = ? WHERE username = ?",
+
+                (r_norm, f_norm, u_r["username"]),
+
+            )
+
+
 
     cur.execute(
 
@@ -712,8 +794,6 @@ def init_db() -> None:
 
 
 
-    # 3. Tabla de Historial de Eventos por Ciclo
-
     cur.execute(
 
         """
@@ -775,8 +855,6 @@ def init_db() -> None:
     )
 
 
-
-    # 4. Tabla de Log de Carga de Horas
 
     cur.execute(
 
@@ -922,7 +1000,7 @@ def seed_initial_demo_data() -> None:
 
 # ==============================================================================
 
-# 4. AUTENTICACIÓN CASE-SENSITIVE Y GESTIÓN DE USUARIOS
+# 4. AUTENTICACIÓN CASE-SENSITIVE Y GESTIÓN MULTI-FLOTA DE USUARIOS
 
 # ==============================================================================
 
@@ -930,9 +1008,7 @@ def authenticate_user_case_sensitive(username_input: str, password_input: str) -
 
     """
 
-    Verifica Usuario y Contraseña respetando exactamente mayúsculas y minúsculas (Case-Sensitive).
-
-    Ejemplo: 'Admin1' y 'Mendoza' coinciden; 'admin1' o 'mendoza' son rechazados.
+    Valida Usuario y Contraseña respetando exactamente mayúsculas y minúsculas (Case-Sensitive).
 
     """
 
@@ -966,15 +1042,21 @@ def authenticate_user_case_sensitive(username_input: str, password_input: str) -
 
     if row and row["username"] == u_clean and row["password"] == p_clean:
 
+        rol_norm = normalize_role_name(row["rol"])
+
+        flotas_list = parse_assigned_flotas(row["flota_asignada"], rol_norm)
+
         return {
 
             "username": row["username"],
 
-            "nombre_mostrar": row["nombre_mostrar"],
+            "nombre_mostrar": row["username"],
 
-            "rol": row["rol"],
+            "rol": rol_norm,
 
-            "flota_asignada": row["flota_asignada"],
+            "flota_asignada": ",".join(flotas_list),
+
+            "flotas_list": flotas_list,
 
         }
 
@@ -988,29 +1070,37 @@ def create_new_user(
 
     username: str,
 
-    nombre_mostrar: str,
-
     password: str,
 
     rol: str,
 
-    flota_asignada: str,
+    flotas_seleccionadas: List[str],
 
 ) -> Tuple[bool, str]:
 
     u = (username or "").strip()
 
-    n = (nombre_mostrar or "").strip() or u
-
     p = password or ""
+
+    r_norm = normalize_role_name(rol)
 
     if not u or not p:
 
-        return False, "El Usuario y la Contraseña no pueden estar vacíos."
+        return False, "El Usuario y la Contraseña son obligatorios."
 
     if " " in u:
 
-        return False, "El nombre de usuario para login no debe contener espacios (ej. PlannerPalas1)."
+        return False, "El Usuario no debe contener espacios (ej. PlannerPalas1)."
+
+
+
+    if r_norm == "Admin":
+
+        flotas_final = list(FLOTAS_MACRO)
+
+    else:
+
+        flotas_final = [f for f in flotas_seleccionadas if f in FLOTAS_MACRO]
 
 
 
@@ -1030,6 +1120,8 @@ def create_new_user(
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    flota_str = ",".join(flotas_final)
+
     cur.execute(
 
         """
@@ -1040,7 +1132,7 @@ def create_new_user(
 
         """,
 
-        (u, n, p, rol, flota_asignada, now_str),
+        (u, u, p, r_norm, flota_str, now_str),
 
     )
 
@@ -1048,7 +1140,7 @@ def create_new_user(
 
     conn.close()
 
-    return True, f"Usuario '{u}' ({rol} · Flota: {flota_asignada}) creado correctamente."
+    return True, f"Usuario '{u}' registrado con éxito (Rol: {r_norm} · Flota(s): {flota_str or 'Ninguna'})."
 
 
 
@@ -1060,13 +1152,11 @@ def update_existing_user(
 
     new_username: str,
 
-    nombre_mostrar: str,
-
     new_password: str,
 
     rol: str,
 
-    flota_asignada: str,
+    flotas_seleccionadas: List[str],
 
 ) -> Tuple[bool, str]:
 
@@ -1074,13 +1164,27 @@ def update_existing_user(
 
     new_u = (new_username or "").strip()
 
-    n = (nombre_mostrar or "").strip() or new_u
-
     p = new_password or ""
+
+    r_norm = normalize_role_name(rol)
 
     if not orig or not new_u or not p:
 
-        return False, "El usuario y la contraseña no pueden quedar vacíos."
+        return False, "El Usuario y la Contraseña no pueden quedar vacíos."
+
+    if " " in new_u:
+
+        return False, "El Usuario no debe contener espacios."
+
+
+
+    if r_norm == "Admin":
+
+        flotas_final = list(FLOTAS_MACRO)
+
+    else:
+
+        flotas_final = [f for f in flotas_seleccionadas if f in FLOTAS_MACRO]
 
 
 
@@ -1096,9 +1200,11 @@ def update_existing_user(
 
             conn.close()
 
-            return False, f"El nuevo nombre de usuario '{new_u}' ya está en uso."
+            return False, f"El nombre de usuario '{new_u}' ya está en uso."
 
 
+
+    flota_str = ",".join(flotas_final)
 
     cur.execute(
 
@@ -1112,7 +1218,7 @@ def update_existing_user(
 
         """,
 
-        (new_u, n, p, rol, flota_asignada, orig),
+        (new_u, new_u, p, r_norm, flota_str, orig),
 
     )
 
@@ -1120,7 +1226,7 @@ def update_existing_user(
 
     conn.close()
 
-    return True, f"Datos del usuario '{new_u}' actualizados con éxito."
+    return True, f"Usuario '{new_u}' actualizado (Rol: {r_norm} · Flota(s): {flota_str or 'Sin control de flota'})."
 
 
 
@@ -1214,7 +1320,7 @@ def save_component_photo_fifo(
 
         f2_fecha, f2_com = row["foto_2_fecha"], row["foto_2_comentario"]
 
-        comentario_limpio = (comentario_foto or "Inspección visual de componente").strip()
+        comentario_limpio = (comentario_foto or "Actualización fotográfica").strip()
 
 
 
@@ -1314,7 +1420,15 @@ def save_component_photo_fifo(
 
 
 
-def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, str]:
+def import_sap_dataframe(
+
+    df: pd.DataFrame,
+
+    usuario_rol: str,
+
+    allowed_flotas: Optional[List[str]] = None,
+
+) -> Tuple[int, int, str]:
 
     required_cols = ["Equipo", "Denominación", "Ubicac.técnica"]
 
@@ -1332,7 +1446,7 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    nuevos, actualizados = 0, 0
+    nuevos, actualizados, omitidos = 0, 0, 0
 
 
 
@@ -1371,6 +1485,14 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
         flota_col = str(row.get("Flota", "") or "").strip().upper()
 
         flota_final = flota_col if flota_col in FLOTAS_MACRO else flota_auto
+
+
+
+        if allowed_flotas is not None and flota_final not in allowed_flotas:
+
+            omitidos += 1
+
+            continue
 
 
 
@@ -1512,7 +1634,7 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
         "INSERT INTO log_carga_horas (fecha_hora, usuario, metodo_carga, componentes_afectados, detalle) VALUES (?, ?, ?, ?, ?)",
 
-        (now_str, usuario_rol, "Sincronización Maestro SAP PM", nuevos + actualizados, f"Nuevos: {nuevos} | Actualizados: {actualizados}"),
+        (now_str, usuario_rol, "Sincronización Maestro SAP PM", nuevos + actualizados, f"Nuevos: {nuevos} | Actualizados: {actualizados} | Omitidos fuera de flota: {omitidos}"),
 
     )
 
@@ -1520,7 +1642,9 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
     conn.close()
 
-    return nuevos, actualizados, "Sincronización SAP completada con éxito."
+    extra_msg = f" (Omitidos de otras flotas: {omitidos})" if omitidos > 0 else ""
+
+    return nuevos, actualizados, f"Sincronización SAP completada con éxito{extra_msg}."
 
 
 
@@ -1535,6 +1659,12 @@ def apply_hours_to_mounted_components(
     metodo_carga: str,
 
 ) -> Tuple[int, List[Dict]]:
+
+    """
+
+    La corrida de horas alimenta a todos los componentes en estado 'Montado' asociados al equipo o código.
+
+    """
 
     conn = get_connection()
 
@@ -1938,7 +2068,7 @@ def generate_hours_template_excel() -> bytes:
 
 # ==============================================================================
 
-# 6. ESTADO DE SESIÓN, PANTALLA DE LOGIN Y BARRA DE NAVEGACIÓN PRINCIPAL
+# 6. ESTADO DE SESIÓN, LOGIN Y NAVEGACIÓN PRINCIPAL
 
 # ==============================================================================
 
@@ -1954,9 +2084,11 @@ def init_session_state() -> None:
 
         "user_role": "Planner",
 
-        "user_flota_asignada": "Todas",
+        "user_flota_asignada": "PALAS",
 
-        "active_flota": "Todas",
+        "user_flotas_list": ["PALAS"],
+
+        "active_flota": "PALAS",
 
         "active_screen": "BUSCAR",  # BUSCAR | ACTUALIZAR | AGREGAR | ESTRATEGIA | USUARIOS
 
@@ -1982,7 +2114,7 @@ def init_session_state() -> None:
 
 def render_login_screen() -> None:
 
-    """Ventana principal minimalista y sobria de inicio de sesión (Case-Sensitive)."""
+    """Ventana principal sobria de inicio de sesión (Case-Sensitive)."""
 
     st.write("")
 
@@ -1998,7 +2130,7 @@ def render_login_screen() -> None:
 
             st.markdown("**CONTROL DE INVENTARIOS — PLANEAMIENTO MANTENIMIENTO MINA**")
 
-            st.caption("Inicia sesión con tus credenciales asignadas (distingue mayúsculas y minúsculas).")
+            st.caption("Ingrese su Usuario y Contraseña (distingue mayúsculas y minúsculas).")
 
             st.divider()
 
@@ -2006,11 +2138,11 @@ def render_login_screen() -> None:
 
             with st.form("login_form", clear_on_submit=False):
 
-                u_in = st.text_input("👤 Usuario:", placeholder="Ej. Admin1")
+                u_in = st.text_input("Usuario:", placeholder="Ej. Admin1")
 
-                p_in = st.text_input("🔒 Contraseña:", type="password", placeholder="Ingresa tu contraseña")
+                p_in = st.text_input("Contraseña:", type="password", placeholder="Ingrese su contraseña")
 
-                submit_login = st.form_submit_button("Ingresar al Sistema", type="primary", use_container_width=True)
+                submit_login = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
 
 
 
@@ -2030,15 +2162,19 @@ def render_login_screen() -> None:
 
                         st.session_state.user_flota_asignada = user_data["flota_asignada"]
 
-                        st.session_state.active_flota = (
+                        st.session_state.user_flotas_list = user_data["flotas_list"]
 
-                            user_data["flota_asignada"]
+                        if user_data["rol"] == "Admin" or len(user_data["flotas_list"]) > 1:
 
-                            if user_data["flota_asignada"] in FLOTAS_MACRO
+                            st.session_state.active_flota = "Todas"
 
-                            else "Todas"
+                        elif len(user_data["flotas_list"]) == 1:
 
-                        )
+                            st.session_state.active_flota = user_data["flotas_list"][0]
+
+                        else:
+
+                            st.session_state.active_flota = "Ninguna"
 
                         st.session_state.active_screen = "BUSCAR"
 
@@ -2046,7 +2182,7 @@ def render_login_screen() -> None:
 
                     else:
 
-                        st.error("Usuario o contraseña incorrectos. Verifica las mayúsculas y minúsculas.")
+                        st.error("Usuario o contraseña incorrectos. Verifique mayúsculas y minúsculas.")
 
 
 
@@ -2056,17 +2192,19 @@ def render_top_navigation(df_all: pd.DataFrame) -> pd.DataFrame:
 
     """
 
-    Cabecera sobria y barra de navegación principal por botones:
+    Barra superior sobria y formal (sin ícono de tractor):
 
-    - Generales: 🔍 Buscar | ✏️ Actualizar / Editar | ➕ Agregar | 📊 Estrategia
+    - Admin: tiene acceso a todas las flotas y al botón adicional `Usuarios`.
 
-    - Adicional exclusivo para Administrador: 👥 Usuarios
+    - Planner: solo ve y opera sobre la(s) flota(s) que le asignó el Admin.
+
+    - Campo: puede Buscar/Visualizar y Actualizar únicamente fotos; en opciones sin permiso recibe aviso formal.
 
     """
 
     role = st.session_state.user_role
 
-    flota_asig = st.session_state.user_flota_asignada
+    flotas_usuario: List[str] = st.session_state.user_flotas_list
 
 
 
@@ -2084,47 +2222,51 @@ def render_top_navigation(df_all: pd.DataFrame) -> pd.DataFrame:
 
         with c_flota:
 
-            if flota_asig in FLOTAS_MACRO and role != "Administrador":
-
-                st.session_state.active_flota = flota_asig
-
-                st.selectbox(
-
-                    "🚜 Flota asignada:",
-
-                    options=[flota_asig],
-
-                    disabled=True,
-
-                    key="flota_locked_sel",
-
-                )
-
-            else:
+            if role == "Admin":
 
                 opciones_flota = ["Todas"] + FLOTAS_MACRO
 
-                if st.session_state.active_flota not in opciones_flota:
+            elif len(flotas_usuario) > 1:
 
-                    st.session_state.active_flota = "Todas"
+                opciones_flota = ["Todas mis flotas"] + flotas_usuario
 
-                st.selectbox(
+            elif len(flotas_usuario) == 1:
 
-                    "🚜 Flota de trabajo:",
+                opciones_flota = [flotas_usuario[0]]
 
-                    options=opciones_flota,
+            else:
 
-                    key="active_flota",
+                opciones_flota = ["Sin flota asignada"]
 
-                )
+
+
+            if st.session_state.active_flota not in opciones_flota:
+
+                st.session_state.active_flota = opciones_flota[0]
+
+
+
+            st.selectbox(
+
+                "Flota de control:",
+
+                options=opciones_flota,
+
+                disabled=(len(opciones_flota) == 1),
+
+                key="active_flota",
+
+            )
 
 
 
         with c_user:
 
-            st.markdown(f"**👤 {st.session_state.planner_nombre}**")
+            flota_resumen = "Todas" if role == "Admin" else (", ".join(flotas_usuario) if flotas_usuario else "Sin asignar")
 
-            st.caption(f"Rol: `{role}` · Usuario: `{st.session_state.auth_username}`")
+            st.markdown(f"**Usuario: {st.session_state.auth_username}**")
+
+            st.caption(f"Rol: `{role}` · Flota(s): `{flota_resumen}`")
 
 
 
@@ -2142,47 +2284,23 @@ def render_top_navigation(df_all: pd.DataFrame) -> pd.DataFrame:
 
 
 
-    # Botones de navegación según el rol del usuario autenticado
+    # Botones generales (y botón Usuarios adicional solo para Admin)
 
-    if role == "Administrador":
+    nav_buttons = [
 
-        nav_buttons = [
+        ("BUSCAR", "🔍 Buscar"),
 
-            ("BUSCAR", "🔍 Buscar"),
+        ("ACTUALIZAR", "✏️ Actualizar / Editar"),
 
-            ("ACTUALIZAR", "✏️ Actualizar / Editar"),
+        ("AGREGAR", "➕ Agregar"),
 
-            ("AGREGAR", "➕ Agregar"),
+        ("ESTRATEGIA", "📊 Estrategia"),
 
-            ("ESTRATEGIA", "📊 Estrategia"),
+    ]
 
-            ("USUARIOS", "👥 Usuarios"),
+    if role == "Admin":
 
-        ]
-
-    elif role == "Campo-Tablet":
-
-        nav_buttons = [
-
-            ("BUSCAR", "🔍 Buscar"),
-
-            ("ACTUALIZAR", "✏️ Actualizar / Editar"),
-
-        ]
-
-    else:
-
-        nav_buttons = [
-
-            ("BUSCAR", "🔍 Buscar"),
-
-            ("ACTUALIZAR", "✏️ Actualizar / Editar"),
-
-            ("AGREGAR", "➕ Agregar"),
-
-            ("ESTRATEGIA", "📊 Estrategia"),
-
-        ]
+        nav_buttons.append(("USUARIOS", "👥 Usuarios"))
 
 
 
@@ -2222,7 +2340,33 @@ def render_top_navigation(df_all: pd.DataFrame) -> pd.DataFrame:
 
     st.write("")
 
-    return df_all if st.session_state.active_flota == "Todas" else df_all[df_all["flota"] == st.session_state.active_flota]
+
+
+    # Filtrar el inventario según las flotas permitidas al usuario y el selector activo
+
+    if role == "Admin":
+
+        if st.session_state.active_flota == "Todas":
+
+            return df_all
+
+        return df_all[df_all["flota"] == st.session_state.active_flota]
+
+
+
+    if not flotas_usuario:
+
+        return df_all.iloc[0:0]
+
+
+
+    df_permitido = df_all[df_all["flota"].isin(flotas_usuario)]
+
+    if st.session_state.active_flota in FLOTAS_MACRO:
+
+        return df_permitido[df_permitido["flota"] == st.session_state.active_flota]
+
+    return df_permitido
 
 
 
@@ -2230,15 +2374,15 @@ def render_top_navigation(df_all: pd.DataFrame) -> pd.DataFrame:
 
 # ==============================================================================
 
-# 7. VENTANA EXCLUSIVA DE ADMINISTRADOR: INGRESAR Y EDITAR USUARIOS
+# 7. VENTANA EXCLUSIVA DE ADMIN: USUARIOS (INGRESAR Y EDITAR CON MULTI-FLOTA)
 
 # ==============================================================================
 
 def render_screen_usuarios() -> None:
 
-    if st.session_state.user_role != "Administrador":
+    if st.session_state.user_role != "Admin":
 
-        st.warning("Acceso restringido a perfiles de Administrador.")
+        st.warning(MENSAJE_SIN_PERMISO)
 
         return
 
@@ -2248,7 +2392,7 @@ def render_screen_usuarios() -> None:
 
     df_users = pd.read_sql_query(
 
-        "SELECT username, nombre_mostrar, rol, flota_asignada, fecha_creacion FROM usuarios ORDER BY rol, username",
+        "SELECT username, rol, flota_asignada, fecha_creacion FROM usuarios ORDER BY rol, username",
 
         conn,
 
@@ -2262,45 +2406,71 @@ def render_screen_usuarios() -> None:
 
 
 
+    # --- SUBVENTANA 1: INGRESAR USUARIO ---
+
     with tab_new_u:
 
-        c_form, c_table = st.columns([1.2, 1.6])
+        c_form, c_table = st.columns([1.25, 1.55])
 
         with c_form:
 
             with st.container(border=True):
 
-                st.markdown("#### ➕ Registrar Nuevo Usuario")
+                st.markdown("#### Ingresar Nuevo Usuario")
 
-                with st.form("form_create_user", clear_on_submit=True):
+                new_u = st.text_input("Usuario (distingue mayúsculas) *:", placeholder="Ej. PlannerPalas1", key="new_u_in")
 
-                    new_u = st.text_input("Usuario (para login, distingue mayúsculas) *:", placeholder="Ej. PlannerPalas")
+                new_pwd = st.text_input("Contraseña (distingue mayúsculas) *:", type="password", key="new_p_in")
 
-                    new_nom = st.text_input("Nombre Completo / Visible *:", placeholder="Ej. Carlos Quispe")
-
-                    new_pwd = st.text_input("Contraseña (distingue mayúsculas) *:", type="password")
-
-                    new_rol = st.selectbox("Rol en el Sistema *:", options=ROLES_SISTEMA, index=1)
-
-                    new_flota = st.selectbox("Flota Asignada *:", options=["Todas"] + FLOTAS_MACRO, index=0)
-
-                    btn_create = st.form_submit_button("💾 Crear Usuario", type="primary", use_container_width=True)
+                new_rol = st.selectbox("Rol *:", options=ROLES_SISTEMA, index=1, key="new_r_in")
 
 
 
-                    if btn_create:
+                st.markdown("**Flota(s) de control asignadas (marcar / desmarcar):**")
 
-                        ok, msg = create_new_user(new_u, new_nom, new_pwd, new_rol, new_flota)
+                if new_rol == "Admin":
 
-                        if ok:
+                    st.caption("El rol Admin tiene acceso automático a todas las flotas.")
 
-                            st.success(msg)
+                    flotas_marcadas_alta = list(FLOTAS_MACRO)
 
-                            st.rerun()
+                    cols_f = st.columns(4)
 
-                        else:
+                    for i, fl_name in enumerate(FLOTAS_MACRO):
 
-                            st.error(msg)
+                        with cols_f[i]:
+
+                            st.checkbox(fl_name, value=True, disabled=True, key=f"new_fl_adm_{fl_name}")
+
+                else:
+
+                    flotas_marcadas_alta = []
+
+                    cols_f = st.columns(4)
+
+                    for i, fl_name in enumerate(FLOTAS_MACRO):
+
+                        with cols_f[i]:
+
+                            if st.checkbox(fl_name, value=(i == 0), key=f"new_fl_chk_{fl_name}"):
+
+                                flotas_marcadas_alta.append(fl_name)
+
+
+
+                if st.button("Guardar Usuario", type="primary", use_container_width=True, key="btn_save_new_user"):
+
+                    ok, msg = create_new_user(new_u, new_pwd, new_rol, flotas_marcadas_alta)
+
+                    if ok:
+
+                        st.success(msg)
+
+                        st.rerun()
+
+                    else:
+
+                        st.error(msg)
 
 
 
@@ -2308,7 +2478,7 @@ def render_screen_usuarios() -> None:
 
             with st.container(border=True):
 
-                st.markdown("#### 📋 Usuarios Registrados")
+                st.markdown("#### Lista de Usuarios Registrados")
 
                 st.dataframe(
 
@@ -2320,15 +2490,13 @@ def render_screen_usuarios() -> None:
 
                     column_config={
 
-                        "username": "Usuario (Login)",
+                        "username": "Usuario",
 
-                        "nombre_mostrar": "Nombre Visible",
+                        "rol": "Rol",
 
-                        "rol": "Rol Asignado",
+                        "flota_asignada": "Flota(s) con Control",
 
-                        "flota_asignada": "Flota Asignada",
-
-                        "fecha_creacion": "Fecha Alta",
+                        "fecha_creacion": "Fecha de Registro",
 
                     },
 
@@ -2336,11 +2504,13 @@ def render_screen_usuarios() -> None:
 
 
 
+    # --- SUBVENTANA 2: EDITAR USUARIOS (LISTA -> SELECCIÓN -> PUNTITOS DE FLOTA -> ACTUALIZAR) ---
+
     with tab_edit_u:
 
         with st.container(border=True):
 
-            st.markdown("#### ✏️ Modificar Nombre, Contraseña, Rol o Flota de un Usuario")
+            st.markdown("#### Editar Usuario Existente")
 
             conn = get_connection()
 
@@ -2352,63 +2522,103 @@ def render_screen_usuarios() -> None:
 
             opciones_u = [
 
-                f"{r['username']} | {r['nombre_mostrar']} ({r['rol']} · Flota: {r['flota_asignada']})"
+                f"{r['username']} | Rol: {normalize_role_name(r['rol'])} | Flota(s): {r['flota_asignada'] or 'Sin flota'}"
 
                 for _, r in df_u_full.iterrows()
 
             ]
 
-            sel_u_str = st.selectbox("Seleccionar Usuario a Editar:", options=opciones_u)
+            sel_u_str = st.selectbox("Lista de Usuarios (seleccione un usuario para ver y editar sus datos):", options=opciones_u)
 
             orig_u = sel_u_str.split(" | ")[0].strip()
 
             u_row = df_u_full[df_u_full["username"] == orig_u].iloc[0]
 
+            rol_actual_u = normalize_role_name(u_row["rol"])
+
+            flotas_actuales_u = parse_assigned_flotas(u_row["flota_asignada"], rol_actual_u)
+
+            # Si no es Admin y tenía cadena vacía, respetar lista vacía
+
+            if rol_actual_u != "Admin" and not str(u_row["flota_asignada"] or "").strip():
+
+                flotas_actuales_u = []
 
 
-            c1, c2 = st.columns(2)
+
+            c1, c2, c3 = st.columns(3)
 
             with c1:
 
-                ed_username = st.text_input("Usuario (Login):", value=str(u_row["username"]), key=f"ed_u_{orig_u}")
-
-                ed_nombre = st.text_input("Nombre Visible:", value=str(u_row["nombre_mostrar"]), key=f"ed_n_{orig_u}")
-
-                ed_pwd = st.text_input("Contraseña (distingue mayúsculas):", value=str(u_row["password"]), key=f"ed_p_{orig_u}")
+                ed_username = st.text_input("Usuario:", value=str(u_row["username"]), key=f"ed_u_{orig_u}")
 
             with c2:
 
+                ed_pwd = st.text_input("Contraseña:", value=str(u_row["password"]), key=f"ed_p_{orig_u}")
+
+            with c3:
+
                 ed_rol = st.selectbox(
 
-                    "Rol Asignado:",
+                    "Rol:",
 
                     options=ROLES_SISTEMA,
 
-                    index=ROLES_SISTEMA.index(u_row["rol"]) if u_row["rol"] in ROLES_SISTEMA else 1,
+                    index=ROLES_SISTEMA.index(rol_actual_u) if rol_actual_u in ROLES_SISTEMA else 1,
 
                     key=f"ed_r_{orig_u}",
 
                 )
 
-                opciones_fl = ["Todas"] + FLOTAS_MACRO
-
-                ed_flota = st.selectbox(
-
-                    "Flota Asignada:",
-
-                    options=opciones_fl,
-
-                    index=opciones_fl.index(u_row["flota_asignada"]) if u_row["flota_asignada"] in opciones_fl else 0,
-
-                    key=f"ed_f_{orig_u}",
-
-                )
 
 
+            st.markdown("**Control de Flota(s) (marque para otorgar control o desmarque para retirar el control de esa flota):**")
 
-            if st.button("💾 Guardar Cambios del Usuario", type="primary", use_container_width=True):
+            if ed_rol == "Admin":
 
-                ok_up, msg_up = update_existing_user(orig_u, ed_username, ed_nombre, ed_pwd, ed_rol, ed_flota)
+                st.caption("El rol Admin mantiene control sobre las 4 flotas.")
+
+                nuevas_flotas_sel = list(FLOTAS_MACRO)
+
+                cols_ed_f = st.columns(4)
+
+                for i, fl_name in enumerate(FLOTAS_MACRO):
+
+                    with cols_ed_f[i]:
+
+                        st.checkbox(fl_name, value=True, disabled=True, key=f"ed_fl_adm_{orig_u}_{fl_name}")
+
+            else:
+
+                nuevas_flotas_sel = []
+
+                cols_ed_f = st.columns(4)
+
+                for i, fl_name in enumerate(FLOTAS_MACRO):
+
+                    with cols_ed_f[i]:
+
+                        checked_default = fl_name in flotas_actuales_u
+
+                        if st.checkbox(fl_name, value=checked_default, key=f"ed_fl_chk_{orig_u}_{fl_name}"):
+
+                            nuevas_flotas_sel.append(fl_name)
+
+
+
+                if nuevas_flotas_sel:
+
+                    st.caption(f"Flotas con control activo para `{ed_username}`: **{', '.join(nuevas_flotas_sel)}**")
+
+                else:
+
+                    st.warning(f"El usuario `{ed_username}` no tiene ninguna flota marcada actualmente (no tendrá control sobre ninguna flota).")
+
+
+
+            if st.button("Actualizar", type="primary", use_container_width=True, key=f"btn_upd_{orig_u}"):
+
+                ok_up, msg_up = update_existing_user(orig_u, ed_username, ed_pwd, ed_rol, nuevas_flotas_sel)
 
                 if ok_up:
 
@@ -2416,11 +2626,13 @@ def render_screen_usuarios() -> None:
 
                         st.session_state.auth_username = ed_username.strip()
 
-                        st.session_state.planner_nombre = ed_nombre.strip() or ed_username.strip()
+                        st.session_state.planner_nombre = ed_username.strip()
 
                         st.session_state.user_role = ed_rol
 
-                        st.session_state.user_flota_asignada = ed_flota
+                        st.session_state.user_flotas_list = list(FLOTAS_MACRO) if ed_rol == "Admin" else nuevas_flotas_sel
+
+                        st.session_state.user_flota_asignada = ",".join(st.session_state.user_flotas_list)
 
                     st.success(msg_up)
 
@@ -2442,9 +2654,17 @@ def render_screen_usuarios() -> None:
 
 def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
+    if not st.session_state.user_flotas_list and st.session_state.user_role != "Admin":
+
+        st.warning("Su usuario no tiene ninguna flota asignada actualmente. Contáctese con un Admin.")
+
+        return
+
+
+
     if df_flota.empty:
 
-        st.info(f"No hay componentes registrados en la flota **{st.session_state.active_flota}**. Puedes agregarlos en **➕ Agregar**.")
+        st.info(f"No hay componentes registrados en la flota seleccionada (**{st.session_state.active_flota}**).")
 
         return
 
@@ -2466,25 +2686,25 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            st.metric("📦 Total Flota", f"{total}", f"Vista: {st.session_state.active_flota}")
+            st.metric("Total Flota", f"{total}", f"Vista: {st.session_state.active_flota}")
 
     with k2:
 
         with st.container(border=True):
 
-            st.metric("🟢 Montados Operando", f"{montados}", "En operación")
+            st.metric("Montados Operando", f"{montados}", "En operación")
 
     with k3:
 
         with st.container(border=True):
 
-            st.metric("🔵 Listos para Reemplazo", f"{reemplazos}", "Reparado / Nuevo")
+            st.metric("Listos para Reemplazo", f"{reemplazos}", "Reparado / Nuevo")
 
     with k4:
 
         with st.container(border=True):
 
-            st.metric("🟠 En Taller / Por Reparar", f"{taller}", "En atención")
+            st.metric("En Taller / Por Reparar", f"{taller}", "En atención")
 
 
 
@@ -2494,7 +2714,7 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         modelos_disp = ["Todos"] + sorted(df_flota["modelo"].dropna().unique().tolist())
 
-        sel_mod = st.selectbox("⚙️ Modelo:", modelos_disp, key="vis_mod")
+        sel_mod = st.selectbox("Modelo:", modelos_disp, key="vis_mod")
 
     with f2:
 
@@ -2502,19 +2722,19 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         equipos_disp = ["Todos"] + sorted(df_sub_eq["equipo_principal"].dropna().unique().tolist())
 
-        sel_eq = st.selectbox("🚜 Equipo Principal:", equipos_disp, key="vis_eq")
+        sel_eq = st.selectbox("Equipo Principal:", equipos_disp, key="vis_eq")
 
     with f3:
 
-        sel_est = st.selectbox("📌 Estado:", ["Todos", "Solo Reemplazos (Reparado/Nuevo)"] + ESTADOS_COMPONENTE, key="vis_est")
+        sel_est = st.selectbox("Estado:", ["Todos", "Solo Reemplazos (Reparado/Nuevo)"] + ESTADOS_COMPONENTE, key="vis_est")
 
     with f4:
 
-        q = st.text_input("🔍 Código SAP (ej. BRASWIT231), serie o descripción:", key="vis_q")
+        q = st.text_input("Buscar Código SAP (ej. BRASWIT231), serie o descripción:", key="vis_q")
 
     with f5:
 
-        st.selectbox("🗂️ Vista:", ["Tarjetas", "Tabla"], key="vista_inventario")
+        st.selectbox("Vista:", ["Tarjetas", "Tabla"], key="vista_inventario")
 
 
 
@@ -2610,13 +2830,13 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
                                 f"**SAP:** `{cod_item}` · **Equipo:** `{r['equipo_principal']}`\n\n"
 
-                                f"📍 **Ubic. SAP:** `{r['ubicacion_tecnica']}` · ⏱️ **{float(r['horas_ciclo_actual']):,.0f} hrs**\n\n"
+                                f"**Ubic. SAP:** `{r['ubicacion_tecnica']}` · **{float(r['horas_ciclo_actual']):,.0f} hrs**\n\n"
 
-                                f"💬 *{ult_com[:85]}*"
+                                f"*{ult_com[:85]}*"
 
                             )
 
-                            if st.button("🔍 Ver Ficha", key=f"sel_card_{cod_item}", use_container_width=True):
+                            if st.button("Ver Ficha", key=f"sel_card_{cod_item}", use_container_width=True):
 
                                 st.session_state.selected_component = cod_item
 
@@ -2728,7 +2948,7 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("📋 Ficha 360°, Reemplazos Compatibles y Log por Ciclo del Componente:", opciones, index=idx_def, key="vis_sel_comp")
+    sel_comp = st.selectbox("Ficha 360°, Reemplazos Compatibles y Log por Ciclo del Componente:", opciones, index=idx_def, key="vis_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -2764,19 +2984,19 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
                 f"**Flota:** `{comp['flota']}` · **Modelo Compatible:** `{comp['modelo']}` · **Equipo:** `{comp['equipo_principal']}`\n\n"
 
-                f"📍 **Ubicación Técnica SAP:** `{comp['ubicacion_tecnica']}` · **Fabricante:** {comp['fabricante']} · **Serie:** {comp['serie']} · **ABC:** {comp['criticidad_abc']}"
+                f"**Ubicación Técnica SAP:** `{comp['ubicacion_tecnica']}` · **Fabricante:** {comp['fabricante']} · **Serie:** {comp['serie']} · **ABC:** {comp['criticidad_abc']}"
 
             )
 
             st.write(
 
-                f"⏱️ **Hrs Ciclo Actual:** {float(comp['horas_ciclo_actual']):,.1f} hrs | "
+                f"**Hrs Ciclo Actual:** {float(comp['horas_ciclo_actual']):,.1f} hrs | "
 
-                f"⏳ **Hrs Totales:** {float(comp['horas_acumuladas_totales']):,.1f} hrs | "
+                f"**Hrs Totales:** {float(comp['horas_acumuladas_totales']):,.1f} hrs | "
 
-                f"💵 **Costo Ciclo:** ${float(comp['gasto_ciclo_actual_usd']):,.2f} | "
+                f"**Costo Ciclo:** ${float(comp['gasto_ciclo_actual_usd']):,.2f} | "
 
-                f"🏦 **Costo Acumulado:** ${float(comp['gasto_acumulado_total_usd']):,.2f}"
+                f"**Costo Acumulado:** ${float(comp['gasto_acumulado_total_usd']):,.2f}"
 
             )
 
@@ -2816,7 +3036,7 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     ]
 
-    with st.expander(f"🔄 Reemplazos Compatibles del Modelo {comp['modelo']} en Flota {comp['flota']} ({len(df_reemplazos)} encontrados)", expanded=True):
+    with st.expander(f"Reemplazos Compatibles del Modelo {comp['modelo']} en Flota {comp['flota']} ({len(df_reemplazos)} encontrados)", expanded=True):
 
         if df_reemplazos.empty:
 
@@ -2842,13 +3062,13 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            st.markdown("**📷 Fotografía #1 (Previa en el ciclo de 2 fotos)**")
+            st.markdown("**Fotografía #1 (Previa en el ciclo de 2 fotos)**")
 
             if comp["foto_1_path"] and os.path.exists(comp["foto_1_path"]):
 
                 st.image(comp["foto_1_path"], use_container_width=True)
 
-                st.caption(f"📅 {comp['foto_1_fecha'] or ''} — 💬 {comp['foto_1_comentario'] or ''}")
+                st.caption(f"{comp['foto_1_fecha'] or ''} — {comp['foto_1_comentario'] or ''}")
 
             else:
 
@@ -2858,13 +3078,13 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            st.markdown("**📷 Fotografía #2 (Más Reciente)**")
+            st.markdown("**Fotografía #2 (Más Reciente)**")
 
             if comp["foto_2_path"] and os.path.exists(comp["foto_2_path"]):
 
                 st.image(comp["foto_2_path"], use_container_width=True)
 
-                st.caption(f"📅 {comp['foto_2_fecha'] or ''} — 💬 {comp['foto_2_comentario'] or ''}")
+                st.caption(f"{comp['foto_2_fecha'] or ''} — {comp['foto_2_comentario'] or ''}")
 
             else:
 
@@ -2878,7 +3098,7 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-    st.markdown("#### 📊 Resumen Consolidado por Ciclo / Vida")
+    st.markdown("#### Resumen Consolidado por Ciclo / Vida")
 
     df_resumen_ciclos = build_cycle_summary_dataframe(df_eventos_all, comp)
 
@@ -2886,7 +3106,7 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-    st.markdown("#### ⏱️ Log Cronológico de Acciones, Comentarios y Corridas por Tiempo")
+    st.markdown("#### Log Cronológico de Acciones, Comentarios y Corridas por Tiempo")
 
     filtro_log = st.radio(
 
@@ -2948,11 +3168,19 @@ def render_screen_buscar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-# 9. VENTANA 2: ACTUALIZAR / EDITAR (FOTO FIFO, UBICACIÓN SAP Y CORRIDA HORAS)
+# 9. VENTANA 2: ACTUALIZAR / EDITAR (CONTROL DE PERMISOS CAMPO VS PLANNER/ADMIN)
 
 # ==============================================================================
 
 def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
+
+    if not st.session_state.user_flotas_list and st.session_state.user_role != "Admin":
+
+        st.warning("Su usuario no tiene ninguna flota asignada actualmente. Contáctese con un Admin.")
+
+        return
+
+
 
     if df_flota.empty:
 
@@ -2974,7 +3202,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("Seleccionar Componente a Actualizar / Editar:", opciones, index=idx_def, key="upd_sel_comp")
+    sel_comp = st.selectbox("Seleccionar Componente:", opciones, index=idx_def, key="upd_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -2984,7 +3212,9 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
 
 
-    autor_str = f"{st.session_state.planner_nombre} ({st.session_state.user_role} · {comp_row['flota']})"
+    role = st.session_state.user_role
+
+    autor_str = f"{st.session_state.auth_username} ({role} · {comp_row['flota']})"
 
 
 
@@ -3004,31 +3234,23 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
 
 
-    role = st.session_state.user_role
+    sub_bitacora, sub_estado, sub_horas = st.tabs(
 
-    if role == "Campo-Tablet":
+        [
 
-        sub_bitacora, = st.tabs(["📸 Foto (Ciclo 2 Fotos) y Comentario Manual"])
+            "📸 1. Actualizar Fotografías (Ciclo 2 Fotos)",
 
-        sub_estado, sub_horas = None, None
+            "🔄 2. Editar Estado, Comentarios, Ubicación SAP y Costos",
 
-    else:
+            "⏱️ 3. Corrida de Horas (Componentes Montados)",
 
-        sub_bitacora, sub_estado, sub_horas = st.tabs(
+        ]
 
-            [
-
-                "📸 1. Foto (Ciclo 2 Fotos) y Comentario Manual",
-
-                "🔄 2. Ubicación Técnica SAP, Estado y Costos",
-
-                "⏱️ 3. Corrida de Horas (Componentes Montados)",
-
-            ]
-
-        )
+    )
 
 
+
+    # --- SUBPESTAÑA 1: FOTOS FIFO (PERMITIDO A CAMPO, PLANNER Y ADMIN) ---
 
     with sub_bitacora:
 
@@ -3038,7 +3260,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
             with st.container(border=True):
 
-                st.markdown("**📷 Foto #1 Guardada (Se borra al subir la 3ra)**")
+                st.markdown("**Fotografía #1 Guardada (Se borra al subir la 3ra)**")
 
                 if comp_row["foto_1_path"] and os.path.exists(comp_row["foto_1_path"]):
 
@@ -3052,7 +3274,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
             with st.container(border=True):
 
-                st.markdown("**📷 Foto #2 Guardada (Más Reciente)**")
+                st.markdown("**Fotografía #2 Guardada (Más Reciente)**")
 
                 if comp_row["foto_2_path"] and os.path.exists(comp_row["foto_2_path"]):
 
@@ -3066,77 +3288,25 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
         with st.container(border=True):
 
-            origen = st.radio("Origen de la foto:", ["📸 Tomar Foto con Cámara", "📁 Subir Imagen desde Galería/PC"], horizontal=True)
+            origen = st.radio("Origen de la fotografía:", ["📸 Tomar Foto con Cámara", "📁 Subir Imagen desde Galería/PC"], horizontal=True)
 
             img_file = st.camera_input("Capturar fotografía:") if origen.startswith("📸") else st.file_uploader("Seleccionar imagen:", type=["jpg", "jpeg", "png", "webp"], key="up_img")
 
 
 
-            c_est_rap, c_eq_rap = st.columns(2)
+            if role == "Campo":
 
-            with c_est_rap:
+                st.caption("Perfil Campo: habilitado exclusivamente para actualizar fotografías del componente.")
 
-                est_rapido = st.selectbox(
-
-                    "Estado actual del componente:",
-
-                    options=ESTADOS_COMPONENTE,
-
-                    index=ESTADOS_COMPONENTE.index(comp_row["estado_actual"]) if comp_row["estado_actual"] in ESTADOS_COMPONENTE else 0,
-
-                    key="est_rap_sel",
-
-                )
-
-            with c_eq_rap:
-
-                eq_rapido = st.text_input("Equipo asociado (ej. PALA8 / SHO008 / PATQ8):", value=str(comp_row["equipo_principal"]), key="eq_rap_txt")
-
-
-
-            com_txt = st.text_area(
-
-                "Comentario manual (ej. BRASWIT231 salió de la Pala 8 y está por reparar):",
-
-                placeholder="Escribe aquí de qué equipo salió, en qué condición está o qué requiere...",
-
-                height=85,
-
-                key="up_com",
-
-            )
-
-
-
-            b1, b2 = st.columns(2)
-
-            with b1:
-
-                if st.button("💾 Guardar Foto (Ciclo 2 Fotos) + Comentario", type="primary", use_container_width=True):
+                if st.button("Guardar Fotografía (Ciclo 2 Fotos)", type="primary", use_container_width=True):
 
                     if img_file is None:
 
-                        st.error("Toma o selecciona una foto primero (o usa el botón de la derecha para guardar solo el comentario).")
+                        st.error("Tome o seleccione una fotografía primero.")
 
                     else:
 
-                        conn = get_connection()
-
-                        cur = conn.cursor()
-
-                        cur.execute(
-
-                            "UPDATE componentes SET estado_actual = ?, equipo_principal = ? WHERE codigo_equipo = ?",
-
-                            (est_rapido, eq_rapido.strip(), cod_sel),
-
-                        )
-
-                        conn.commit()
-
-                        conn.close()
-
-                        ok, msg, _ = save_component_photo_fifo(cod_sel, img_file, com_txt, autor_str, True)
+                        ok, msg, _ = save_component_photo_fifo(cod_sel, img_file, f"Foto registrada por {st.session_state.auth_username} (Campo)", autor_str, True)
 
                         if ok:
 
@@ -3148,63 +3318,149 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                             st.error(msg)
 
-            with b2:
+            else:
 
-                if st.button("📝 Guardar Solo Comentario y Estado", use_container_width=True):
+                c_est_rap, c_eq_rap = st.columns(2)
 
-                    if not com_txt.strip():
+                with c_est_rap:
 
-                        st.warning("Escribe un comentario manual antes de guardar.")
+                    est_rapido = st.selectbox(
 
-                    else:
+                        "Estado actual del componente:",
 
-                        conn = get_connection()
+                        options=ESTADOS_COMPONENTE,
 
-                        cur = conn.cursor()
+                        index=ESTADOS_COMPONENTE.index(comp_row["estado_actual"]) if comp_row["estado_actual"] in ESTADOS_COMPONENTE else 0,
 
-                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        key="est_rap_sel",
 
-                        cur.execute(
+                    )
 
-                            "UPDATE componentes SET estado_actual = ?, equipo_principal = ? WHERE codigo_equipo = ?",
+                with c_eq_rap:
 
-                            (est_rapido, eq_rapido.strip(), cod_sel),
-
-                        )
-
-                        cur.execute(
-
-                            """
-
-                            INSERT INTO historial_eventos (
-
-                                codigo_equipo, numero_ciclo, fecha_hora, usuario_rol,
-
-                                tipo_operacion, estado_asignado, equipo_principal,
-
-                                horas_componente_evento, comentario_bitacora
-
-                            ) VALUES (?, ?, ?, ?, 'Registro Manual Planner', ?, ?, ?, ?)
-
-                            """,
-
-                            (cod_sel, comp_row["ciclo_actual"], now_str, autor_str, est_rapido, eq_rapido.strip(), comp_row["horas_ciclo_actual"], com_txt.strip()),
-
-                        )
-
-                        conn.commit()
-
-                        conn.close()
-
-                        st.success(f"Comentario y estado ({est_rapido}) guardados.")
-
-                        st.rerun()
+                    eq_rapido = st.text_input("Equipo asociado (ej. PALA8 / SHO008 / PATQ8):", value=str(comp_row["equipo_principal"]), key="eq_rap_txt")
 
 
 
-    if sub_estado is not None:
+                com_txt = st.text_area(
 
-        with sub_estado:
+                    "Comentario manual del Planner (ej. BRASWIT231 salió de la Pala 8 y está por reparar):",
+
+                    placeholder="Escriba aquí de qué equipo salió, condición técnica o requerimiento...",
+
+                    height=85,
+
+                    key="up_com",
+
+                )
+
+
+
+                b1, b2 = st.columns(2)
+
+                with b1:
+
+                    if st.button("Guardar Foto (Ciclo 2 Fotos) + Comentario", type="primary", use_container_width=True):
+
+                        if img_file is None:
+
+                            st.error("Tome o seleccione una foto primero (o use el botón de la derecha para guardar solo el comentario).")
+
+                        else:
+
+                            conn = get_connection()
+
+                            cur = conn.cursor()
+
+                            cur.execute(
+
+                                "UPDATE componentes SET estado_actual = ?, equipo_principal = ? WHERE codigo_equipo = ?",
+
+                                (est_rapido, eq_rapido.strip(), cod_sel),
+
+                            )
+
+                            conn.commit()
+
+                            conn.close()
+
+                            ok, msg, _ = save_component_photo_fifo(cod_sel, img_file, com_txt, autor_str, True)
+
+                            if ok:
+
+                                st.success(msg)
+
+                                st.rerun()
+
+                            else:
+
+                                st.error(msg)
+
+                with b2:
+
+                    if st.button("Guardar Solo Comentario y Estado", use_container_width=True):
+
+                        if not com_txt.strip():
+
+                            st.warning("Escriba un comentario manual antes de guardar.")
+
+                        else:
+
+                            conn = get_connection()
+
+                            cur = conn.cursor()
+
+                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                            cur.execute(
+
+                                "UPDATE componentes SET estado_actual = ?, equipo_principal = ? WHERE codigo_equipo = ?",
+
+                                (est_rapido, eq_rapido.strip(), cod_sel),
+
+                            )
+
+                            cur.execute(
+
+                                """
+
+                                INSERT INTO historial_eventos (
+
+                                    codigo_equipo, numero_ciclo, fecha_hora, usuario_rol,
+
+                                    tipo_operacion, estado_asignado, equipo_principal,
+
+                                    horas_componente_evento, comentario_bitacora
+
+                                ) VALUES (?, ?, ?, ?, 'Registro Manual Planner', ?, ?, ?, ?)
+
+                                """,
+
+                                (cod_sel, comp_row["ciclo_actual"], now_str, autor_str, est_rapido, eq_rapido.strip(), comp_row["horas_ciclo_actual"], com_txt.strip()),
+
+                            )
+
+                            conn.commit()
+
+                            conn.close()
+
+                            st.success(f"Comentario y estado ({est_rapido}) guardados.")
+
+                            st.rerun()
+
+
+
+    # --- SUBPESTAÑA 2: RESTRINGIDA PARA CAMPO ---
+
+    with sub_estado:
+
+        if role == "Campo":
+
+            st.warning(MENSAJE_SIN_PERMISO)
+
+        else:
+
+            flotas_permitidas = FLOTAS_MACRO if role == "Admin" else st.session_state.user_flotas_list
 
             with st.container(border=True):
 
@@ -3222,9 +3478,9 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                         "Flota:",
 
-                        options=FLOTAS_MACRO,
+                        options=flotas_permitidas,
 
-                        index=FLOTAS_MACRO.index(comp_row["flota"]) if comp_row["flota"] in FLOTAS_MACRO else 0,
+                        index=flotas_permitidas.index(comp_row["flota"]) if comp_row["flota"] in flotas_permitidas else 0,
 
                     )
 
@@ -3344,13 +3600,13 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                 if nuevo_estado == "De Baja":
 
-                    st.warning("⚠️ Dar de baja retirará el componente de la operación activa.")
+                    st.warning("Dar de baja retirará el componente de la operación activa.")
 
                     confirm_baja = st.checkbox("Confirmo dar de baja este componente.")
 
 
 
-                if st.button("💾 Guardar Cambios en el Log del Ciclo", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
+                if st.button("Guardar Cambios en el Log del Ciclo", type="primary", use_container_width=True, disabled=(not ok_k or not ok_r or not confirm_baja)):
 
                     costo_tot = round(float(c_kit or 0.0) + float(c_rep or 0.0), 2)
 
@@ -3442,13 +3698,19 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
 
 
-    if sub_horas is not None:
+    # --- SUBPESTAÑA 3: CORRIDA DE HORAS (RESTRINGIDA PARA CAMPO) ---
 
-        with sub_horas:
+    with sub_horas:
+
+        if role == "Campo":
+
+            st.warning(MENSAJE_SIN_PERMISO)
+
+        else:
 
             st.download_button(
 
-                "📥 Descargar Plantilla Excel de Corrida de Horas",
+                "Descargar Plantilla Excel de Corrida de Horas",
 
                 data=generate_hours_template_excel(),
 
@@ -3478,7 +3740,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                 if t_col and v_col:
 
-                    if st.button("🚀 Ejecutar Corrida de Horas en Montados", type="primary", use_container_width=True):
+                    if st.button("Ejecutar Corrida de Horas en Montados", type="primary", use_container_width=True):
 
                         upd_list = []
 
@@ -3506,7 +3768,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
             st.divider()
 
-            df_montados_act = df_all[df_all["estado_actual"] == "Montado"][
+            df_montados_act = df_flota[df_flota["estado_actual"] == "Montado"][
 
                 ["codigo_equipo", "descripcion", "flota", "modelo", "equipo_principal", "ciclo_actual", "horas_ciclo_actual", "horas_acumuladas_totales"]
 
@@ -3556,7 +3818,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                 )
 
-                if st.button("⚡ Aplicar Corrida de Horas", type="primary", use_container_width=True):
+                if st.button("Aplicar Corrida de Horas", type="primary", use_container_width=True):
 
                     upd_grid = []
 
@@ -3570,7 +3832,7 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
                     if not upd_grid:
 
-                        st.warning("Ingresa un valor mayor a 0 en 'Horas_a_Sumar'.")
+                        st.warning("Ingrese un valor mayor a 0 en 'Horas_a_Sumar'.")
 
                     else:
 
@@ -3594,6 +3856,26 @@ def render_screen_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> No
 
 def render_screen_agregar() -> None:
 
+    role = st.session_state.user_role
+
+    if role == "Campo":
+
+        st.warning(MENSAJE_SIN_PERMISO)
+
+        return
+
+
+
+    flotas_permitidas = FLOTAS_MACRO if role == "Admin" else st.session_state.user_flotas_list
+
+    if not flotas_permitidas:
+
+        st.warning("Su usuario no tiene ninguna flota asignada actualmente. Contáctese con un Admin.")
+
+        return
+
+
+
     sub_alta, sub_sap = st.tabs(["➕ Ingresar Componente", "🔄 Subir Excel SAP (Sheet1)"])
 
 
@@ -3606,13 +3888,13 @@ def render_screen_agregar() -> None:
 
             with j1:
 
-                flota_sel = st.selectbox("🚜 Flota *:", options=FLOTAS_MACRO, index=0)
+                flota_sel = st.selectbox("Flota *:", options=flotas_permitidas, index=0)
 
             with j2:
 
                 modelos_sugeridos = list(CATALOGO_FLOTAS.get(flota_sel, {}).keys()) + ["Otro (escribir manual)"]
 
-                mod_pick = st.selectbox("⚙️ Modelo Compatible *:", options=modelos_sugeridos)
+                mod_pick = st.selectbox("Modelo Compatible *:", options=modelos_sugeridos)
 
                 if mod_pick == "Otro (escribir manual)":
 
@@ -3626,7 +3908,7 @@ def render_screen_agregar() -> None:
 
                 equipos_sugeridos = CATALOGO_FLOTAS.get(flota_sel, {}).get(mod_pick, []) + ["TALLER / ALMACEN", "Otro (escribir manual)"]
 
-                eq_pick = st.selectbox("🏷️ Equipo Principal *:", options=equipos_sugeridos)
+                eq_pick = st.selectbox("Equipo Principal *:", options=equipos_sugeridos)
 
                 if eq_pick == "Otro (escribir manual)":
 
@@ -3690,13 +3972,7 @@ def render_screen_agregar() -> None:
 
 
 
-            comentario_inicial = st.text_area(
-
-                "Comentario inicial (ej. salió de la Pala 8 y está por reparar):",
-
-                height=70,
-
-            )
+            comentario_inicial = st.text_area("Comentario inicial (ej. salió de la Pala 8 y está por reparar):", height=70)
 
 
 
@@ -3714,7 +3990,7 @@ def render_screen_agregar() -> None:
 
 
 
-            if st.button("💾 Guardar Componente", type="primary", use_container_width=True):
+            if st.button("Guardar Componente", type="primary", use_container_width=True):
 
                 if not cod_m.strip() or not desc_m.strip() or not modelo_final:
 
@@ -3724,7 +4000,7 @@ def render_screen_agregar() -> None:
 
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                    autor_alta = f"{st.session_state.planner_nombre} ({st.session_state.user_role})"
+                    autor_alta = f"{st.session_state.auth_username} ({role})"
 
                     conn = get_connection()
 
@@ -3816,7 +4092,7 @@ def render_screen_agregar() -> None:
 
             st.download_button(
 
-                "📥 Descargar Plantilla 'Inventario SAP Nov.xlsx'",
+                "Descargar Plantilla 'Inventario SAP Nov.xlsx'",
 
                 data=generate_sap_template_excel(),
 
@@ -3840,9 +4116,11 @@ def render_screen_agregar() -> None:
 
                 st.dataframe(df_sap_up.head(10), use_container_width=True, hide_index=True)
 
-                if st.button("🚀 Sincronizar Lista SAP", type="primary", use_container_width=True):
+                if st.button("Sincronizar Lista SAP", type="primary", use_container_width=True):
 
-                    n_new, n_upd, msg = import_sap_dataframe(df_sap_up, st.session_state.planner_nombre)
+                    allowed_f = None if role == "Admin" else flotas_permitidas
+
+                    n_new, n_upd, msg = import_sap_dataframe(df_sap_up, st.session_state.auth_username, allowed_f)
 
                     st.success(f"{msg} (Nuevos: {n_new} | Actualizados: {n_upd})")
 
@@ -3856,19 +4134,23 @@ def render_screen_agregar() -> None:
 
 # ==============================================================================
 
-def render_screen_estrategia(df_all: pd.DataFrame) -> None:
+def render_screen_estrategia(df_flota: pd.DataFrame) -> None:
+
+    if st.session_state.user_role == "Campo":
+
+        st.warning(MENSAJE_SIN_PERMISO)
+
+        return
+
+
 
     with st.container(border=True):
 
-        st.markdown("#### 📊 Estrategia de Componentes y Respaldo General")
+        st.markdown("#### Estrategia de Componentes y Respaldo General")
 
-        st.caption("Vista ejecutiva preliminar (lista para profundizar en siguientes etapas de desarrollo).")
+        if not df_flota.empty:
 
-
-
-        if not df_all.empty:
-
-            df_comp = df_all.copy()
+            df_comp = df_flota.copy()
 
             df_comp["costo_por_hora_usd"] = df_comp.apply(
 
@@ -3928,7 +4210,7 @@ def render_screen_estrategia(df_all: pd.DataFrame) -> None:
 
             st.download_button(
 
-                "📥 Descargar Base Completa a Excel (.xlsx)",
+                "Descargar Base Completa a Excel (.xlsx)",
 
                 data=export_full_database_to_excel(),
 
@@ -3950,7 +4232,7 @@ def render_screen_estrategia(df_all: pd.DataFrame) -> None:
 
                     st.download_button(
 
-                        "🗄️ Descargar Archivo SQLite (.db)",
+                        "Descargar Archivo SQLite (.db)",
 
                         data=f_db.read(),
 
@@ -3979,8 +4261,6 @@ def main() -> None:
     init_db()
 
 
-
-    # Si no ha iniciado sesión, mostrar únicamente la ventana principal de Login
 
     if not st.session_state.authenticated:
 
@@ -4018,7 +4298,7 @@ def main() -> None:
 
     elif scr == "ESTRATEGIA":
 
-        render_screen_estrategia(df_all)
+        render_screen_estrategia(df_flota)
 
     elif scr == "USUARIOS":
 
