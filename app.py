@@ -4,29 +4,37 @@
 
 P.I.M. - CONTROL DE INVENTARIOS | PLANEAMIENTO MANTENIMIENTO MINA
 
-Versión Producción Auditada (100% Nativa Streamlit - CERO HTML):
+Arquitectura CMMS / EAM Moderna (Inspirada en MaintainX, UpKeep, Limble CMMS y Fiori SAP PM)
 
-1. Las 4 Flotas Fijas son SIEMPRE: PALAS, PERFOS, VOLQUETES, AUXILIARES.
+Regla Técnica: 100% Componentes Nativos de Streamlit (CERO inyección de estilos externos).
 
-   - Incluye migración automática en cada arranque: si la base de datos tenía modelos viejos
+Garantiza visualización limpia en cualquier versión de Streamlit Cloud, PC corporativa, tablet y móvil.
 
-     como '410A', '495H' o '994F' en la columna `flota`, los mueve automáticamente a `modelo`
 
-     y corrige `flota` a PALAS, PERFOS, VOLQUETES o AUXILIARES.
 
-2. Jerarquía clara: Flota (PALAS/PERFOS/VOLQUETES/AUXILIARES) -> Modelo (ej. 4100A, 495HR, PV271, 797F, 994F)
+Estructura Operativa Directa (4 Pestañas):
 
-   -> Equipo Principal (ej. PALA4 / SHO004 / PATQ4, PALA8 / SHO008 / PATQ8).
+  1. 👁️ Inventario y Reemplazos: KPIs por Flota, Filtros en 1 línea, Vista Tarjetas / Tabla con barras de progreso,
 
-3. Log de Acción por Ciclo e Historial de Corridas por Tiempo:
+     Hoja de Vida con Reemplazos Compatibles del mismo Modelo/Flota, 2 Fotos FIFO, Resumen por Ciclo y Log Cronológico.
 
-   - Resumen consolidado por cada Ciclo/Vida (Inicio, Fin/Último mov., Equipos donde operó, Horas corridas,
+  2. ✏️ Editar, Foto FIFO y Horas:
 
-     Kits/OC/OT y Costo por Ciclo) + Línea de tiempo cronológica de cada acción y corrida de horas.
+     - Subpestaña 1: Acción rápida Campo/Planner (Visor 2 fotos + Cámara/Galería con rotación FIFO + Estado/Equipo + Comentario).
 
-4. Ciclo estricto de 2 fotografías (FIFO): al tomar/subir la 3ra foto se borra físicamente la #1,
+     - Subpestaña 2: Gestión Técnica y Financiera SAP (Ubicación Técnica SAP con deducción automática de estado,
 
-   la #2 pasa a #1 y la nueva queda en #2.
+       control de vidas con navegación, OT, OC, Proveedor, Kits y Costos USD).
+
+     - Subpestaña 3: Corrida Masiva de Horas (Archivo Excel/CSV, tabla editable en vivo o suma rápida por equipo).
+
+  3. ➕ Ingresar / Subir SAP: Alta guiada en cascada (Flota -> Modelo -> Equipo -> Ubicación SAP -> Estado sugerido)
+
+     e importador directo de Excel SAP (Sheet1).
+
+  4. 📊 Estrategia y Backup: Gráficos interactivos $/hr por Flota/Modelo, matriz Horas vs Costo,
+
+     ranking crítico con barras de desgaste y respaldo inmediato en .xlsx (multi-pestaña) y .db (SQLite).
 
 """
 
@@ -50,6 +58,8 @@ import pandas as pd
 
 import plotly.express as px
 
+import plotly.graph_objects as go
+
 import streamlit as st
 
 from PIL import Image
@@ -64,7 +74,7 @@ from PIL import Image
 
 st.set_page_config(
 
-    page_title="P.I.M. | Control de Inventarios",
+    page_title="P.I.M. | Control de Inventarios CMMS",
 
     page_icon="⚙️",
 
@@ -89,6 +99,22 @@ DEFAULT_SAP_EXCEL = os.path.join(BASE_DIR, "Inventario SAP Nov.xlsx")
 # LAS 4 FLOTAS ÚNICAS Y DEFINIDAS DEL SISTEMA
 
 FLOTAS_MACRO = ["PALAS", "PERFOS", "VOLQUETES", "AUXILIARES"]
+
+
+
+# Referencia de meta de horas de ciclo (PCR referencial) para barras visuales de progreso
+
+PCR_META_HORAS_POR_FLOTA: Dict[str, float] = {
+
+    "PALAS": 12000.0,
+
+    "PERFOS": 8000.0,
+
+    "VOLQUETES": 15000.0,
+
+    "AUXILIARES": 10000.0,
+
+}
 
 
 
@@ -210,7 +236,7 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 # ==============================================================================
 
-# 1. CLASIFICACIÓN INTELIGENTE SAP: FLOTA (4 FIJAS), MODELO, EQUIPO Y ESTADO
+# 1. REGLAS DE CLASIFICACIÓN SAP: FLOTA (4 FIJAS), MODELO, EQUIPO Y ESTADO
 
 # ==============================================================================
 
@@ -226,7 +252,7 @@ def normalize_model_name(raw_model: str) -> str:
 
         return "495HR"
 
-    return m if m else "SIN_MODELO"
+    return m if m else "4100A"
 
 
 
@@ -234,7 +260,7 @@ def normalize_model_name(raw_model: str) -> str:
 
 def infer_flota_from_model_or_unit(modelo: str, equipo: str, ubic_tec: str = "") -> str:
 
-    """Garantiza que SIEMPRE devuelva una de las 4 flotas: PALAS, PERFOS, VOLQUETES o AUXILIARES."""
+    """Garantiza que SIEMPRE retorne una de las 4 flotas: PALAS, PERFOS, VOLQUETES o AUXILIARES."""
 
     m_up = normalize_model_name(modelo)
 
@@ -274,7 +300,23 @@ def infer_flota_from_model_or_unit(modelo: str, equipo: str, ubic_tec: str = "")
 
 def infer_estado_from_ubicacion_sap(ubic_tec: str, current_status: Optional[str] = None) -> str:
 
-    """Deduce el estado según la Ubicación Técnica SAP."""
+    """
+
+    Deduce automáticamente el estado del componente a partir de su Ubicación Técnica SAP:
+
+    - TALLER / REP / OVERHAUL / EVALUAC -> 'Por Reparar'
+
+    - ALMACEN / BODEGA / LISTO / STOCK -> 'Reparado'
+
+    - RECLAMO / GARANT -> 'Salida por Reclamo'
+
+    - BAJA / SCRAP / CHATARRA -> 'De Baja'
+
+    - DESMONT / PISO / PATIO -> 'Desmontado'
+
+    - Ubicación de equipo (SHO, PALA, PATQ, PER, VOL, FLO, TRACT, MOTO, CIST) -> 'Montado'
+
+    """
 
     u = str(ubic_tec or "").upper().strip()
 
@@ -358,7 +400,7 @@ def parse_ubicacion_tecnica(ubic_tec: str) -> Tuple[str, str, str, str]:
 
 # ==============================================================================
 
-# 2. UTILIDADES DE VALIDACIÓN, ETIQUETAS NATIVAS Y VIDAS
+# 2. UTILIDADES DE VALIDACIÓN NUMÉRICA, ETIQUETAS NATIVAS Y VIDAS
 
 # ==============================================================================
 
@@ -373,6 +415,14 @@ def format_vidas_label(vidas: int) -> str:
 
 
 def get_vidas_navigation_state(total_vidas: int, vida_actual: int) -> Dict:
+
+    """
+
+    - Con 0 o 1 vida: muestra '1 vida' (o '0 vidas') y oculta los botones de navegación.
+
+    - Con varias vidas (>1): muestra '&lt;n&gt; vidas' en plural y activa '◀ Ant.' / 'Sig. ▶'.
+
+    """
 
     total = max(0, int(total_vidas))
 
@@ -438,19 +488,19 @@ def validate_numeric_input(
 
     except ValueError:
 
-        return False, None, f"El campo '{field_name}' debe ser numérico."
+        return False, None, f"El campo '{field_name}' debe ser numérico (sin letras)."
 
     if not allow_negative and num < 0:
 
-        return False, None, f"El campo '{field_name}' no permite negativos."
+        return False, None, f"El campo '{field_name}' no permite valores negativos."
 
     if not allow_zero and num == 0:
 
-        return False, None, f"El campo '{field_name}' debe ser mayor a 0."
+        return False, None, f"El campo '{field_name}' debe ser mayor a cero."
 
     if not allow_decimal and not num.is_integer():
 
-        return False, None, f"El campo '{field_name}' debe ser un número entero."
+        return False, None, f"El campo '{field_name}' debe ser un número entero (sin decimales)."
 
     return True, num, ""
 
@@ -460,9 +510,11 @@ def validate_numeric_input(
 
 def get_native_badges_markdown(flota: str, modelo: str, estado: str, vidas: int) -> str:
 
+    """Etiquetas semánticas 100% nativas de Streamlit (:color-background[...])."""
+
     flota_clean = str(flota or "PALAS").upper().strip()
 
-    modelo_clean = str(modelo or "S/M").upper().strip()
+    modelo_clean = str(modelo or "4100A").upper().strip()
 
 
 
@@ -616,8 +668,6 @@ def init_db() -> None:
 
 
 
-    # Asegurar que exista la columna `modelo` aunque la base haya sido creada con el código anterior
-
     cur.execute("PRAGMA table_info(componentes)")
 
     existing_cols = [r["name"] for r in cur.fetchall()]
@@ -628,7 +678,9 @@ def init_db() -> None:
 
 
 
-    # Normalizar SIEMPRE cualquier fila que tenga un modelo ('410A', '495H', '994F') metido en `flota`
+    # Auto-migración en cada arranque: si alguna fila tiene '410A', '495H' o '994F' en `flota`,
+
+    # lo pasa a `modelo` y asigna la Flota real (PALAS, PERFOS, VOLQUETES, AUXILIARES).
 
     cur.execute("SELECT codigo_equipo, flota, modelo, equipo_principal, ubicacion_tecnica FROM componentes")
 
@@ -646,9 +698,7 @@ def init_db() -> None:
 
         if f_val not in FLOTAS_MACRO or not m_val or m_val in ("SIN_MODELO", "NONE", "NAN"):
 
-            flota_calc, mod_calc, _, _ = parse_ubicacion_tecnica(ubic)
-
-            # Si en f_val había un modelo como 410A, 495H, 994F, rescatarlo como modelo
+            _, mod_calc, _, _ = parse_ubicacion_tecnica(ubic)
 
             if f_val not in FLOTAS_MACRO and f_val not in ("", "SIN_FLOTA", "NONE"):
 
@@ -766,10 +816,6 @@ def init_db() -> None:
 
     conn.close()
 
-
-
-    # Garantizar que existan componentes semilla de las 4 flotas y el ejemplo BRASWIT231
-
     seed_initial_demo_data()
 
 
@@ -832,8 +878,6 @@ def seed_initial_demo_data() -> None:
 
 
 
-    # Si BRASWIT231 recién se insertó y no tiene eventos, agregar su evento demostrativo
-
     cur.execute("SELECT COUNT(*) as c FROM historial_eventos WHERE codigo_equipo = 'BRASWIT231'")
 
     if cur.fetchone()["c"] == 0:
@@ -886,7 +930,7 @@ def seed_initial_demo_data() -> None:
 
 # ==============================================================================
 
-# 4. FUNCIONES OPERATIVAS: FOTOS FIFO (2 FOTOS), HORAS, SAP Y BACKUP
+# 4. FUNCIONES DE NEGOCIO: CICLO FIFO 2 FOTOS, CORRIDA DE HORAS, SAP Y BACKUP
 
 # ==============================================================================
 
@@ -1030,7 +1074,7 @@ def save_component_photo_fifo(
 
             )
 
-            msg_rotacion = "Ciclo de 2 fotos aplicado: se borró la más antigua (#1), la #2 pasó a #1 y la nueva quedó en #2."
+            msg_rotacion = "Ciclo FIFO de 2 fotos aplicado: se borró físicamente la foto #1, la #2 pasó a #1 y la nueva quedó en #2."
 
 
 
@@ -1166,7 +1210,7 @@ def import_sap_dataframe(df: pd.DataFrame, usuario_rol: str) -> Tuple[int, int, 
 
         comentario_sap = str(row.get("Comentario", "") or "").strip()
 
-        if comentario_sap == "nan":
+        if comentario_sap == "nan" or comentario_sap.startswith("[EJEMPLO") or comentario_sap.startswith("[Ejemplo"):
 
             comentario_sap = ""
 
@@ -1474,14 +1518,6 @@ def apply_hours_to_mounted_components(
 
 def build_cycle_summary_dataframe(df_eventos_all: pd.DataFrame, comp: pd.Series) -> pd.DataFrame:
 
-    """
-
-    Construye el Resumen de Acción y Corridas por Ciclo (1 fila por cada Vida/Ciclo del componente)
-
-    mostrando Fecha Inicio, Último Movimiento, Equipos donde operó, Horas corridas, Kits/OC y Costo Total del Ciclo.
-
-    """
-
     total_ciclos = max(1, int(comp["ciclo_actual"] or 1))
 
     rows = []
@@ -1536,13 +1572,9 @@ def build_cycle_summary_dataframe(df_eventos_all: pd.DataFrame, comp: pd.Series)
 
 
 
-        if c_num == total_ciclos:
+        hrs_mostrar = max(hrs_max_ev, float(comp["horas_ciclo_actual"] or 0.0)) if c_num == total_ciclos else hrs_max_ev
 
-            hrs_mostrar = max(hrs_max_ev, float(comp["horas_ciclo_actual"] or 0.0))
-
-        else:
-
-            hrs_mostrar = hrs_max_ev
+        costo_hr_c = (costo_ciclo / hrs_mostrar) if hrs_mostrar > 0 else 0.0
 
 
 
@@ -1558,17 +1590,19 @@ def build_cycle_summary_dataframe(df_eventos_all: pd.DataFrame, comp: pd.Series)
 
                 "Equipo(s)": equipos or str(comp["equipo_principal"]),
 
-                "Horas Corridas en Ciclo": round(hrs_mostrar, 1),
+                "Horas Corridas": round(hrs_mostrar, 1),
 
-                "Hrs Sumadas por Corridas": round(hrs_sumadas, 1),
+                "Hrs Sumadas (Corridas)": round(hrs_sumadas, 1),
 
-                "N° Corridas Hrs": corridas_count,
+                "N° Corridas": corridas_count,
 
-                "N° Acciones Log": acciones_count,
+                "N° Eventos": acciones_count,
 
                 "OT / OC": f"{ots} {ocs}".strip() or "S/N",
 
-                "Costo del Ciclo ($ USD)": round(costo_ciclo, 2),
+                "Costo Ciclo ($)": round(costo_ciclo, 2),
+
+                "Costo/Hr ($/hr)": round(costo_hr_c, 2),
 
                 "Último Comentario": ult_com,
 
@@ -1646,59 +1680,17 @@ def generate_sap_template_excel() -> bytes:
 
                 "Fabr. Nº-serie": "SN-BRK-231",
 
-                "Válido de": "2024-01-01",
+                "Válido de": "2026-01-01",
 
                 "Fin de validez": "9999-12-31",
 
-                "Comentario": "Salió de la Pala 8 y está por reparar",
+                "Flota": "PALAS",
 
-            },
+                "Modelo": "495HR",
 
-            {
+                "Estado": "Por Reparar",
 
-                "Equipo": "10045901",
-
-                "Denominación": "MOTOR ELECTRICO IZAJE PRINCIPAL IZQ",
-
-                "Indicador ABC": "A",
-
-                "Ubicac.técnica": "SPCC-TOQ-MIN-4100A-SHO004-IZAJ",
-
-                "Denominación3": "PALA 4 (SHO004 / PATQ4)",
-
-                "Fabricante": "KOMATSU / P&H",
-
-                "Fabr. Nº-serie": "SN-4100A-IZ01",
-
-                "Válido de": "2024-01-01",
-
-                "Fin de validez": "9999-12-31",
-
-                "Comentario": "Operativo en Pala 4 modelo 4100A",
-
-            },
-
-            {
-
-                "Equipo": "PERCAB402",
-
-                "Denominación": "CABEZAL DE ROTACION PRINCIPAL",
-
-                "Indicador ABC": "A",
-
-                "Ubicac.técnica": "SPCC-TOQ-MIN-PV271-PER004-ROTA",
-
-                "Denominación3": "PERFORADORA PV271 #4",
-
-                "Fabricante": "EPIROC",
-
-                "Fabr. Nº-serie": "EP-PV271-901",
-
-                "Válido de": "2024-01-01",
-
-                "Fin de validez": "9999-12-31",
-
-                "Comentario": "Montado en PER004",
+                "Comentario": "[Ejemplo] Salió de Pala 8",
 
             },
 
@@ -1726,15 +1718,7 @@ def generate_hours_template_excel() -> bytes:
 
         [
 
-            {"Equipo_Principal": "SHO009", "Horas_a_Sumar": 145.0},
-
-            {"Equipo_Principal": "SHO004", "Horas_a_Sumar": 132.5},
-
-            {"Equipo_Principal": "PER004", "Horas_a_Sumar": 110.0},
-
-            {"Equipo_Principal": "VOL002", "Horas_a_Sumar": 160.0},
-
-            {"Equipo_Principal": "FLO005", "Horas_a_Sumar": 118.0},
+            {"Equipo_Principal": "SHO009", "Horas_a_Sumar": 145.0, "Observacion_Referencia": "[Ejemplo] Corrida semanal"},
 
         ]
 
@@ -1756,7 +1740,7 @@ def generate_hours_template_excel() -> bytes:
 
 # ==============================================================================
 
-# 5. CABECERA CON LAS 4 FLOTAS DEFINIDAS (PALAS, PERFOS, VOLQUETES, AUXILIARES)
+# 5. BARRA DE CONTEXTO SUPERIOR (ESPACIO PROPIO POR PLANNER)
 
 # ==============================================================================
 
@@ -1776,6 +1760,8 @@ def init_session_state() -> None:
 
         "vida_comp_ref": None,
 
+        "vista_inventario": "Tarjetas",
+
     }
 
     for k, v in defaults.items():
@@ -1792,7 +1778,7 @@ def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
     with st.container(border=True):
 
-        c_title, c_flota, c_rol, c_planner = st.columns([2.0, 1.4, 1.0, 1.2])
+        c_title, c_flota, c_rol, c_planner = st.columns([2.1, 1.4, 1.0, 1.2])
 
         with c_title:
 
@@ -1820,11 +1806,11 @@ def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
         with c_rol:
 
-            st.selectbox("👤 Perfil:", options=ROLES_SISTEMA, key="user_role")
+            st.selectbox("👤 Rol Operativo:", options=ROLES_SISTEMA, key="user_role")
 
         with c_planner:
 
-            st.text_input("✍️ Planner:", placeholder="Ej. F. Mendoza", key="planner_nombre")
+            st.text_input("✍️ Planner Responsable:", placeholder="Ej. F. Mendoza", key="planner_nombre")
 
 
 
@@ -1836,7 +1822,7 @@ def render_top_bar(df_all: pd.DataFrame) -> pd.DataFrame:
 
 # ==============================================================================
 
-# 6. PESTAÑA 1: VISUALIZAR, REEMPLAZOS POR MODELO Y LOG DE ACCIÓN POR CICLO
+# 6. PESTAÑA 1: INVENTARIO, REEMPLAZOS POR MODELO Y LOG POR CICLO
 
 # ==============================================================================
 
@@ -1866,35 +1852,37 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            st.metric("Total Componentes", f"{total}", f"Flota: {st.session_state.active_flota}")
+            st.metric("📦 Total Flota", f"{total}", f"Vista: {st.session_state.active_flota}")
 
     with k2:
 
         with st.container(border=True):
 
-            st.metric("Montados en Equipo", f"{montados}", "Operando")
+            st.metric("🟢 Montados Operando", f"{montados}", "Acumulando horas")
 
     with k3:
 
         with st.container(border=True):
 
-            st.metric("Listos para Reemplazo", f"{reemplazos}", "Reparado / Nuevo")
+            st.metric("🔵 Listos para Reemplazo", f"{reemplazos}", "Reparado / Nuevo")
 
     with k4:
 
         with st.container(border=True):
 
-            st.metric("Por Reparar / Taller", f"{taller}", "En atención")
+            st.metric("🟠 En Taller / Por Reparar", f"{taller}", "Pendientes de atención")
 
 
 
-    f1, f2, f3, f4 = st.columns([1.1, 1.2, 1.1, 1.8])
+    # Filtros en una sola línea + selector de vista (Tarjetas vs Tabla CMMS)
+
+    f1, f2, f3, f4, f5 = st.columns([1.05, 1.15, 1.15, 1.65, 0.9])
 
     with f1:
 
         modelos_disp = ["Todos"] + sorted(df_flota["modelo"].dropna().unique().tolist())
 
-        sel_mod = st.selectbox("⚙️ Modelo (ej. 4100A, 495HR):", modelos_disp, key="vis_mod")
+        sel_mod = st.selectbox("⚙️ Modelo Compatible:", modelos_disp, key="vis_mod")
 
     with f2:
 
@@ -1902,7 +1890,7 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         equipos_disp = ["Todos"] + sorted(df_sub_eq["equipo_principal"].dropna().unique().tolist())
 
-        sel_eq = st.selectbox("🚜 Equipo (Pala/Perfo/Volq):", equipos_disp, key="vis_eq")
+        sel_eq = st.selectbox("🚜 Equipo Principal:", equipos_disp, key="vis_eq")
 
     with f3:
 
@@ -1910,7 +1898,11 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     with f4:
 
-        q = st.text_input("🔍 Buscar Código SAP (ej. BRASWIT231), descripción o serie:", key="vis_q")
+        q = st.text_input("🔍 Buscar Código SAP (ej. BRASWIT231), serie o descripción:", key="vis_q")
+
+    with f5:
+
+        st.selectbox("🗂️ Vista:", ["Tarjetas", "Tabla CMMS"], key="vista_inventario")
 
 
 
@@ -1962,59 +1954,151 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     conn = get_connection()
 
-    rows_list = [r for _, r in df_filt.head(15).iterrows()]
+    if st.session_state.vista_inventario == "Tarjetas":
 
-    for idx in range(0, len(rows_list), 3):
+        rows_list = [r for _, r in df_filt.head(15).iterrows()]
 
-        cols = st.columns(3)
+        for idx in range(0, len(rows_list), 3):
 
-        for c_i in range(3):
+            cols = st.columns(3)
 
-            if idx + c_i < len(rows_list):
+            for c_i in range(3):
 
-                r = rows_list[idx + c_i]
+                if idx + c_i < len(rows_list):
 
-                cod_item = str(r["codigo_equipo"])
+                    r = rows_list[idx + c_i]
 
-                cur_ev = conn.cursor()
+                    cod_item = str(r["codigo_equipo"])
 
-                cur_ev.execute(
+                    cur_ev = conn.cursor()
 
-                    "SELECT comentario_bitacora FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC LIMIT 1",
+                    cur_ev.execute(
 
-                    (cod_item,),
+                        "SELECT comentario_bitacora FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC LIMIT 1",
 
-                )
+                        (cod_item,),
 
-                ult_ev = cur_ev.fetchone()
+                    )
 
-                ult_com = ult_ev["comentario_bitacora"] if ult_ev and ult_ev["comentario_bitacora"] else "Sin comentarios registrados"
+                    ult_ev = cur_ev.fetchone()
+
+                    ult_com = ult_ev["comentario_bitacora"] if ult_ev and ult_ev["comentario_bitacora"] else "Sin comentarios registrados"
 
 
 
-                with cols[c_i]:
+                    with cols[c_i]:
 
-                    with st.container(border=True):
+                        with st.container(border=True):
 
-                        st.markdown(get_native_badges_markdown(r["flota"], r["modelo"], r["estado_actual"], r["ciclo_actual"]))
+                            st.markdown(get_native_badges_markdown(r["flota"], r["modelo"], r["estado_actual"], r["ciclo_actual"]))
 
-                        st.markdown(f"**{r['descripcion']}**")
+                            st.markdown(f"**{r['descripcion']}**")
 
-                        st.caption(
+                            st.caption(
 
-                            f"**SAP:** `{cod_item}` · **Equipo:** `{r['equipo_principal']}`\n\n"
+                                f"**SAP:** `{cod_item}` · **Equipo:** `{r['equipo_principal']}`\n\n"
 
-                            f"📍 **Ubic. SAP:** `{r['ubicacion_tecnica']}` · ⏱️ **{float(r['horas_ciclo_actual']):,.0f} hrs**\n\n"
+                                f"📍 **Ubic. SAP:** `{r['ubicacion_tecnica']}` · ⏱️ **{float(r['horas_ciclo_actual']):,.0f} hrs**\n\n"
 
-                            f"💬 *{ult_com[:85]}*"
+                                f"💬 *{ult_com[:85]}*"
 
-                        )
+                            )
 
-                        if st.button("🔍 Ver Hoja de Vida y Log por Ciclo", key=f"sel_card_{cod_item}", use_container_width=True):
+                            if st.button("🔍 Abrir Ficha y Compatibilidad", key=f"sel_card_{cod_item}", use_container_width=True):
 
-                            st.session_state.selected_component = cod_item
+                                st.session_state.selected_component = cod_item
 
-                            st.rerun()
+                                st.rerun()
+
+    else:
+
+        df_grid = df_filt.copy()
+
+        df_grid["vidas_lbl"] = df_grid["ciclo_actual"].apply(format_vidas_label)
+
+        df_grid["pct_pcr"] = df_grid.apply(
+
+            lambda r: min(100.0, round((float(r["horas_ciclo_actual"] or 0.0) / PCR_META_HORAS_POR_FLOTA.get(str(r["flota"]), 12000.0)) * 100.0, 1)),
+
+            axis=1,
+
+        )
+
+        df_grid["costo_hr"] = df_grid.apply(
+
+            lambda r: round(float(r["gasto_acumulado_total_usd"] or 0.0) / float(r["horas_acumuladas_totales"]), 2)
+
+            if float(r["horas_acumuladas_totales"] or 0.0) > 0
+
+            else 0.0,
+
+            axis=1,
+
+        )
+
+        st.dataframe(
+
+            df_grid[
+
+                [
+
+                    "codigo_equipo",
+
+                    "descripcion",
+
+                    "flota",
+
+                    "modelo",
+
+                    "equipo_principal",
+
+                    "estado_actual",
+
+                    "vidas_lbl",
+
+                    "horas_ciclo_actual",
+
+                    "pct_pcr",
+
+                    "costo_hr",
+
+                    "ubicacion_tecnica",
+
+                ]
+
+            ],
+
+            use_container_width=True,
+
+            hide_index=True,
+
+            column_config={
+
+                "codigo_equipo": "Código SAP",
+
+                "descripcion": "Componente",
+
+                "flota": "Flota",
+
+                "modelo": "Modelo",
+
+                "equipo_principal": "Equipo",
+
+                "estado_actual": "Estado",
+
+                "vidas_lbl": "Vidas",
+
+                "horas_ciclo_actual": st.column_config.NumberColumn("Hrs Ciclo", format="%.0f hrs"),
+
+                "pct_pcr": st.column_config.ProgressColumn("% Avance Ciclo PCR", min_value=0, max_value=100, format="%.0f%%"),
+
+                "costo_hr": st.column_config.NumberColumn("Costo/Hr", format="$%.2f/hr"),
+
+                "ubicacion_tecnica": "Ubicación Técnica SAP",
+
+            },
+
+        )
 
 
 
@@ -2032,7 +2116,7 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     idx_def = cod_list.index(st.session_state.selected_component) if st.session_state.selected_component in cod_list else 0
 
-    sel_comp = st.selectbox("📋 Seleccionar Componente para ver Hoja de Vida, Reemplazos y Log por Ciclo:", opciones, index=idx_def, key="vis_sel_comp")
+    sel_comp = st.selectbox("📋 Ficha 360°, Reemplazos Compatibles y Log por Ciclo del Componente:", opciones, index=idx_def, key="vis_sel_comp")
 
     cod_sel = sel_comp.split(" | ")[0].strip()
 
@@ -2086,7 +2170,7 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with c_vidas:
 
-            st.metric("Vidas / Ciclos", nav_state["label"])
+            st.metric("Vidas Registradas", nav_state["label"])
 
             if nav_state["show_nav"]:
 
@@ -2122,7 +2206,7 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     ]
 
-    with st.expander(f"🔄 Reemplazos Compatibles del Modelo {comp['modelo']} en Flota {comp['flota']} ({len(df_reemplazos)} encontrados)", expanded=True):
+    with st.expander(f"🔄 Componentes Compatibles del Modelo {comp['modelo']} en Flota {comp['flota']} para Reemplazo ({len(df_reemplazos)} encontrados)", expanded=True):
 
         if df_reemplazos.empty:
 
@@ -2138,11 +2222,29 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
                 hide_index=True,
 
+                column_config={
+
+                    "codigo_equipo": "Código SAP",
+
+                    "descripcion": "Descripción",
+
+                    "modelo": "Modelo",
+
+                    "estado_actual": "Estado",
+
+                    "equipo_principal": "Equipo / Ubicación",
+
+                    "ubicacion_tecnica": "Ubicación Técnica SAP",
+
+                    "horas_ciclo_actual": st.column_config.NumberColumn("Hrs Ciclo", format="%.0f hrs"),
+
+                    "ciclo_actual": "Ciclo #",
+
+                },
+
             )
 
 
-
-    # 2 Últimas Fotografías (Ciclo FIFO)
 
     p1, p2 = st.columns(2)
 
@@ -2180,27 +2282,45 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-    # LOG DE ACCIÓN POR CICLO E HISTORIAL DE CORRIDAS POR TIEMPO
-
     df_eventos_all = pd.read_sql_query("SELECT * FROM historial_eventos WHERE codigo_equipo = ? ORDER BY id_evento DESC", conn, params=(cod_sel,))
 
     conn.close()
 
 
 
-    st.markdown("#### 📊 Resumen Consolidado por Ciclo / Vida (Historial de Desempeño y Costo por Ciclo)")
+    st.markdown("#### 📊 Resumen Consolidado por Ciclo / Vida")
 
     df_resumen_ciclos = build_cycle_summary_dataframe(df_eventos_all, comp)
 
-    st.dataframe(df_resumen_ciclos, use_container_width=True, hide_index=True)
+    st.dataframe(
+
+        df_resumen_ciclos,
+
+        use_container_width=True,
+
+        hide_index=True,
+
+        column_config={
+
+            "Horas Corridas": st.column_config.NumberColumn("Horas Corridas", format="%.1f hrs"),
+
+            "Hrs Sumadas (Corridas)": st.column_config.NumberColumn("Hrs Sumadas", format="+%.1f hrs"),
+
+            "Costo Ciclo ($)": st.column_config.NumberColumn("Costo Ciclo ($)", format="$%.2f"),
+
+            "Costo/Hr ($/hr)": st.column_config.NumberColumn("$/hr", format="$%.2f/hr"),
+
+        },
+
+    )
 
 
 
-    st.markdown("#### ⏱️ Log Detallado de Acciones, Comentarios y Corridas por Tiempo")
+    st.markdown("#### ⏱️ Log Cronológico de Acciones, Comentarios y Corridas por Tiempo")
 
     filtro_log = st.radio(
 
-        "Filtrar bitácora del componente:",
+        "Alcance del log:",
 
         options=["Todas las vidas", f"Solo vida seleccionada (#{nav_state['current']})"] if nav_state["show_nav"] else ["Todas las vidas"],
 
@@ -2250,6 +2370,34 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             hide_index=True,
 
+            column_config={
+
+                "fecha_hora": "Fecha y Hora",
+
+                "numero_ciclo": "Ciclo #",
+
+                "usuario_rol": "Responsable",
+
+                "tipo_operacion": "Acción",
+
+                "estado_asignado": "Estado",
+
+                "equipo_principal": "Equipo",
+
+                "horas_componente_evento": st.column_config.NumberColumn("Horómetro Ciclo", format="%.1f hrs"),
+
+                "horas_sumadas": st.column_config.NumberColumn("Hrs Sumadas", format="+%.1f hrs"),
+
+                "comentario_bitacora": "Comentario / Detalle",
+
+                "numero_ot": "N° OT",
+
+                "numero_oc": "N° OC",
+
+                "costo_total_evento_usd": st.column_config.NumberColumn("Costo Evento ($)", format="$%.2f"),
+
+            },
+
         )
 
     else:
@@ -2262,7 +2410,7 @@ def render_tab_visualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-# 7. PESTAÑA 2: EDITAR / ACTUALIZAR COMPONENTE (FOTO FIFO + COMENTARIOS + HORAS)
+# 7. PESTAÑA 2: EDITAR, FOTO FIFO Y CORRIDA DE HORAS
 
 # ==============================================================================
 
@@ -2322,7 +2470,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
     if role == "Campo-Tablet":
 
-        sub_bitacora, = st.tabs(["📸 Foto (Ciclo 2 Fotos) y Comentario Manual"])
+        sub_bitacora, = st.tabs(["📸 Acción Rápida: Foto (Ciclo 2 Fotos) y Comentario"])
 
         sub_estado, sub_horas = None, None
 
@@ -2332,9 +2480,9 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             [
 
-                "📸 1. Foto (Ciclo 2 Fotos) y Comentario Manual",
+                "📸 1. Acción Rápida: Foto FIFO y Comentario",
 
-                "🔄 2. Editar Ubicación SAP, Estado y Costos",
+                "🔄 2. Gestión Técnica y Financiera SAP",
 
                 "⏱️ 3. Corrida Masiva de Horas (Todas las Flotas)",
 
@@ -2352,7 +2500,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             with st.container(border=True):
 
-                st.markdown("**📷 Foto #1 Guardada (Se borra al tomar la 3ra)**")
+                st.markdown("**📷 Foto #1 Guardada (Se borra físicamente al subir la 3ra)**")
 
                 if comp_row["foto_1_path"] and os.path.exists(comp_row["foto_1_path"]):
 
@@ -2412,9 +2560,9 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             com_txt = st.text_area(
 
-                "Comentario manual (ej. BRASWIT231 salió de la Pala 8 y está por reparar):",
+                "Comentario manual del Planner (ej. BRASWIT231 salió de la Pala 8 y está por reparar):",
 
-                placeholder="Escribe aquí de qué equipo salió, en qué condición está o qué requiere...",
+                placeholder="Escribe aquí de qué equipo salió, condición técnica, motivo o requerimiento...",
 
                 height=90,
 
@@ -2524,7 +2672,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             with st.container(border=True):
 
-                st.markdown("**📍 Editar Ubicación Técnica SAP, Flota, Modelo, Ciclo y Costos**")
+                st.markdown("**📍 Ubicación Técnica SAP, Jerarquía de Flota / Modelo, Ciclo y Costos**")
 
                 u1, u2, u3, u4 = st.columns([1.8, 1.0, 1.0, 1.3])
 
@@ -2564,7 +2712,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 
 
-                st.caption(f"Estado deducido por Ubicación SAP (`{nueva_ubic_sap}`): **{estado_sugerido_sap}**")
+                st.caption(f"Estado deducido automáticamente por Ubicación SAP (`{nueva_ubic_sap}`): **{estado_sugerido_sap}**")
 
                 nuevo_estado = st.selectbox(
 
@@ -2772,7 +2920,7 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
         with sub_horas:
 
-            st.write("Sube un archivo Excel/CSV o aplica horas por equipo para alimentar a **todos los componentes Montados** y dejar registro en el historial de corridas por tiempo.")
+            st.write("Sube un archivo Excel/CSV o edita en tabla para actualizar simultáneamente a **todos los componentes Montados de todas las flotas**.")
 
             st.download_button(
 
@@ -2834,33 +2982,105 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
             st.divider()
 
-            c_eq, c_hr = st.columns(2)
+            st.markdown("**⚡ Asignación Rápida en Pantalla para Componentes Montados**")
 
-            with c_eq:
+            df_montados_act = df_all[df_all["estado_actual"] == "Montado"][
 
-                eq_quick = st.selectbox("O correr horas para un Equipo Principal en pantalla:", sorted(df_all[df_all["estado_actual"] == "Montado"]["equipo_principal"].dropna().unique().tolist()) or ["SIN_EQUIPO"])
+                ["codigo_equipo", "descripcion", "flota", "modelo", "equipo_principal", "ciclo_actual", "horas_ciclo_actual", "horas_acumuladas_totales"]
 
-            with c_hr:
+            ].copy()
 
-                hrs_q_txt = st.text_input("Horas a sumar (+ hrs):", value="0", key="hrs_q_input")
+            if not df_montados_act.empty:
 
-            ok_hq, h_q_val, err_hq = validate_numeric_input(hrs_q_txt, "Horas", allow_zero=False, allow_negative=False, allow_decimal=True)
+                c_eq, c_hr = st.columns(2)
 
-            if st.button("⚡ Aplicar Corrida de Horas al Equipo", use_container_width=True):
+                with c_eq:
+
+                    eq_quick = st.selectbox("Filtrar por Equipo Principal Montado:", ["Todos"] + sorted(df_montados_act["equipo_principal"].dropna().unique().tolist()))
+
+                with c_hr:
+
+                    hrs_q_txt = st.text_input("Pre-llenar horas a sumar (+ hrs):", value="0", key="hrs_q_input")
+
+                ok_hq, h_q_val, err_hq = validate_numeric_input(hrs_q_txt, "Horas", allow_zero=True, allow_negative=False, allow_decimal=True)
 
                 if not ok_hq:
 
                     st.error(err_hq)
 
-                else:
+                    h_q_val = 0.0
 
-                    n_upd, det = apply_hours_to_mounted_components([{"target_type": "equipo_principal", "target_value": eq_quick, "mode": "add", "value": h_q_val}], autor_str, f"Rápida ({eq_quick})")
 
-                    st.success(f"Se sumaron +{h_q_val} hrs a {n_upd} componente(s) montados en {eq_quick}.")
 
-                    if det:
+                df_ed_src = df_montados_act if eq_quick == "Todos" else df_montados_act[df_montados_act["equipo_principal"] == eq_quick]
 
-                        st.dataframe(pd.DataFrame(det), use_container_width=True, hide_index=True)
+                df_ed_src = df_ed_src.copy()
+
+                df_ed_src["Horas_a_Sumar"] = float(h_q_val or 0.0)
+
+
+
+                edited_montados = st.data_editor(
+
+                    df_ed_src,
+
+                    use_container_width=True,
+
+                    hide_index=True,
+
+                    disabled=["codigo_equipo", "descripcion", "flota", "modelo", "equipo_principal", "ciclo_actual", "horas_ciclo_actual", "horas_acumuladas_totales"],
+
+                    column_config={
+
+                        "codigo_equipo": "Código SAP",
+
+                        "descripcion": "Componente",
+
+                        "flota": "Flota",
+
+                        "modelo": "Modelo",
+
+                        "equipo_principal": "Equipo",
+
+                        "ciclo_actual": "Ciclo #",
+
+                        "horas_ciclo_actual": st.column_config.NumberColumn("Hrs Ciclo Actual", format="%.1f"),
+
+                        "horas_acumuladas_totales": st.column_config.NumberColumn("Hrs Totales", format="%.1f"),
+
+                        "Horas_a_Sumar": st.column_config.NumberColumn("➕ Horas a Sumar (+)", min_value=0.0, max_value=10000.0, step=5.0, format="%.1f hrs"),
+
+                    },
+
+                    key="editor_montados_cmms",
+
+                )
+
+                if st.button("⚡ Aplicar Corrida de Horas a Montados", type="primary", use_container_width=True):
+
+                    upd_grid = []
+
+                    for _, r_ed in edited_montados.iterrows():
+
+                        h_add = float(r_ed.get("Horas_a_Sumar", 0.0) or 0.0)
+
+                        if h_add > 0:
+
+                            upd_grid.append({"target_type": "codigo_equipo", "target_value": str(r_ed["codigo_equipo"]), "mode": "add", "value": h_add})
+
+                    if not upd_grid:
+
+                        st.warning("Ingresa un valor mayor a 0 en la columna '➕ Horas a Sumar (+)' en al menos un componente.")
+
+                    else:
+
+                        n_upd, det = apply_hours_to_mounted_components(upd_grid, autor_str, f"Tabla Rápida ({eq_quick})")
+
+                        st.success(f"Se aplicaron las horas a {n_upd} componente(s) montados.")
+
+                        if det:
+
+                            st.dataframe(pd.DataFrame(det), use_container_width=True, hide_index=True)
 
 
 
@@ -2884,13 +3104,13 @@ def render_tab_actualizar(df_all: pd.DataFrame, df_flota: pd.DataFrame) -> None:
 
 # ==============================================================================
 
-# 8. PESTAÑA 3: INGRESAR COMPONENTE O SUBIR EXCEL SAP
+# 8. PESTAÑA 3: INGRESAR COMPONENTE EN CASCADA O SUBIR EXCEL SAP
 
 # ==============================================================================
 
 def render_tab_agregar() -> None:
 
-    sub_alta, sub_sap = st.tabs(["➕ Ingresar Componente Manual", "🔄 Subir / Sincronizar Excel SAP"])
+    sub_alta, sub_sap = st.tabs(["➕ Alta Guiada de Componente", "🔄 Subir / Sincronizar Excel SAP (Sheet1)"])
 
 
 
@@ -2898,7 +3118,7 @@ def render_tab_agregar() -> None:
 
         with st.container(border=True):
 
-            st.markdown("**1. Flota (4 Fijas), Modelo Compatible y Equipo Principal**")
+            st.markdown("**1. Selección en Cascada: Flota (4 Fijas) → Modelo Compatible → Equipo Principal**")
 
             j1, j2, j3 = st.columns(3)
 
@@ -2910,7 +3130,7 @@ def render_tab_agregar() -> None:
 
                 modelos_sugeridos = list(CATALOGO_FLOTAS.get(flota_sel, {}).keys()) + ["Otro (escribir manual)"]
 
-                mod_pick = st.selectbox("⚙️ Modelo *:", options=modelos_sugeridos)
+                mod_pick = st.selectbox("⚙️ Modelo Compatible *:", options=modelos_sugeridos)
 
                 if mod_pick == "Otro (escribir manual)":
 
@@ -2938,7 +3158,7 @@ def render_tab_agregar() -> None:
 
             st.divider()
 
-            st.markdown("**2. Código SAP, Ubicación Técnica y Comentario del Planner**")
+            st.markdown("**2. Código SAP, Ubicación Técnica Autocompletada y Comentario del Planner**")
 
             c1, c2 = st.columns(2)
 
@@ -3162,7 +3382,7 @@ def render_tab_agregar() -> None:
 
 # ==============================================================================
 
-# 9. PESTAÑA 4: ESTRATEGIA Y BACKUP COMPLETO (.XLSX Y .DB)
+# 9. PESTAÑA 4: ESTRATEGIA CMMS, BARRAS DE DESGASTE Y BACKUP (.XLSX / .DB)
 
 # ==============================================================================
 
@@ -3181,6 +3401,14 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
     df_comp["costo_por_hora_usd"] = df_comp.apply(
 
         lambda r: round(r["gasto_acumulado_total_usd"] / r["horas_acumuladas_totales"], 2) if r["horas_acumuladas_totales"] > 0 else 0.0,
+
+        axis=1,
+
+    )
+
+    df_comp["pct_desgaste_ciclo"] = df_comp.apply(
+
+        lambda r: min(100.0, round((float(r["horas_ciclo_actual"] or 0.0) / PCR_META_HORAS_POR_FLOTA.get(str(r["flota"]), 12000.0)) * 100.0, 1)),
 
         axis=1,
 
@@ -3218,13 +3446,13 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
                 text="costo_hr",
 
-                title="Costo por Hora ($/hr) por Flota y Modelo",
+                title="💵 Costo por Hora ($/hr) por Flota y Modelo",
 
             )
 
             fig.update_traces(texttemplate="$%{text:.2f}/hr", textposition="outside")
 
-            fig.update_layout(height=330)
+            fig.update_layout(height=340)
 
             st.plotly_chart(fig, use_container_width=True)
 
@@ -3232,21 +3460,73 @@ def render_tab_estrategia(df_all: pd.DataFrame) -> None:
 
         with st.container(border=True):
 
-            st.markdown("**🚨 Top Componentes por Costo/Hora ($/hr)**")
+            fig_sc = px.scatter(
 
-            st.dataframe(
+                df_comp,
 
-                df_comp.sort_values("costo_por_hora_usd", ascending=False).head(10)[
+                x="horas_acumuladas_totales",
 
-                    ["flota", "modelo", "codigo_equipo", "descripcion", "equipo_principal", "costo_por_hora_usd", "estado_actual"]
+                y="gasto_acumulado_total_usd",
 
-                ],
+                color="flota",
 
-                use_container_width=True,
+                size="ciclo_actual",
 
-                hide_index=True,
+                hover_name="descripcion",
+
+                hover_data=["codigo_equipo", "modelo", "equipo_principal", "estado_actual"],
+
+                title="🎯 Horas Totales vs. Gasto Acumulado ($ USD)",
 
             )
+
+            fig_sc.update_layout(height=340)
+
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+
+
+    with st.container(border=True):
+
+        st.markdown("**🚨 Componentes Críticos por Costo/Hora ($/hr) y % de Avance de Ciclo PCR**")
+
+        st.dataframe(
+
+            df_comp.sort_values("costo_por_hora_usd", ascending=False)[
+
+                ["flota", "modelo", "codigo_equipo", "descripcion", "equipo_principal", "estado_actual", "ciclo_actual", "horas_ciclo_actual", "pct_desgaste_ciclo", "costo_por_hora_usd"]
+
+            ],
+
+            use_container_width=True,
+
+            hide_index=True,
+
+            column_config={
+
+                "flota": "Flota",
+
+                "modelo": "Modelo",
+
+                "codigo_equipo": "Código SAP",
+
+                "descripcion": "Componente",
+
+                "equipo_principal": "Equipo",
+
+                "estado_actual": "Estado",
+
+                "ciclo_actual": "Vidas",
+
+                "horas_ciclo_actual": st.column_config.NumberColumn("Hrs Ciclo", format="%.0f hrs"),
+
+                "pct_desgaste_ciclo": st.column_config.ProgressColumn("% Desgaste Ciclo PCR", min_value=0, max_value=100, format="%.0f%%"),
+
+                "costo_por_hora_usd": st.column_config.NumberColumn("Costo/Hr ($/hr)", format="$%.2f/hr"),
+
+            },
+
+        )
 
 
 
@@ -3328,7 +3608,7 @@ def main() -> None:
 
     if st.session_state.user_role == "Campo-Tablet":
 
-        t_vis, t_upd = st.tabs(["👁️ 1. Visualizar y Reemplazos", "✏️ 2. Editar, Foto y Comentario"])
+        t_vis, t_upd = st.tabs(["👁️ 1. Inventario y Reemplazos", "✏️ 2. Editar, Foto FIFO y Comentario"])
 
         with t_vis:
 
@@ -3344,9 +3624,9 @@ def main() -> None:
 
             [
 
-                "👁️ 1. Visualizar y Log por Ciclo",
+                "👁️ 1. Inventario y Reemplazos",
 
-                "✏️ 2. Editar / Actualizar y Fotos",
+                "✏️ 2. Editar, Foto FIFO y Horas",
 
                 "➕ 3. Ingresar / Subir SAP",
 
